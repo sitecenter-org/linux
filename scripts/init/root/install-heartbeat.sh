@@ -22,6 +22,25 @@ EOF
 chmod +x "$SCRIPT_PATH"
 
 # Add cron job
-(crontab -l 2>/dev/null; echo "* * * * * $SCRIPT_PATH") | crontab -
+#(crontab -l 2>/dev/null; echo "* * * * * $SCRIPT_PATH") | crontab -
+
+CRON_LINE="* * * * * $SCRIPT_PATH"
+
+# Fetch current crontab, if any
+TMP_CRON=$(mktemp)
+crontab -l 2>/dev/null | grep -vF "$CRON_LINE" > "$TMP_CRON" || true
+
+# Add the new line
+echo "$CRON_LINE" >> "$TMP_CRON"
+
+# Install the new crontab
+crontab "$TMP_CRON"
+rm "$TMP_CRON"
+
+if crontab -l | grep -q "$SCRIPT_PATH"; then
+  echo "Crontab updated successfully."
+else
+  echo "Failed to update crontab."
+fi
 
 echo "Heartbeat installed and scheduled every minute via cron."
