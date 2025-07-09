@@ -72,7 +72,7 @@ EOF
 
 # Send metrics via curl
 curl -s -X POST \
-  "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/heartbeat/${MONITOR_CODE}/monitor-server?aliveCode=${ALIVE_CODE}" \
+  "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats?aliveCode=${ALIVE_CODE}" \
   -H "Content-Type: application/json" \
   -d "$json_payload" \
   > /dev/null
