@@ -1,16 +1,16 @@
 #!/bin/bash
 
 # Usage:
-# ./sitecenter-heartbeat.sh ACCOUNT_CODE MONITOR_CODE ALIVE_CODE
+# ./sitecenter-heartbeat.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
 
 set -e
 
 ACCOUNT_CODE="$1"
 MONITOR_CODE="$2"
-ALIVE_CODE="$3"
+SECRET_CODE="$3"
 
-if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$ALIVE_CODE" ]]; then
-  echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE ALIVE_CODE"
+if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
+  echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET_CODE"
   exit 1
 fi
 
@@ -72,7 +72,7 @@ EOF
 
 # Send metrics via curl
 curl -s -X POST \
-  "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats?aliveCode=${ALIVE_CODE}" \
+  "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats?secret=${SECRET_CODE}" \
   -H "Content-Type: application/json" \
   -d "$json_payload" \
   > /dev/null
