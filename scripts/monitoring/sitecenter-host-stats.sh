@@ -96,7 +96,7 @@ load_per_core=$(awk "BEGIN {printf \"%.2f\", $load1 / $cpu_cores}")
 local_ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | grep -v '^127\.' | tr '\n' ',' | sed 's/,$//' || echo "")
 
 # Get primary IP address (first non-loopback)
-primary_ip=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i!~"^127\.") {print $i; exit}}' || echo "")
+primary_ip=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i!~"^127\\.") {print $i; exit}}' || echo "")
 
 # Get external/public IP address (with timeout and fallback)
 external_ip="unknown"
