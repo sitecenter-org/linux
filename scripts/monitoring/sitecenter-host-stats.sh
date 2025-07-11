@@ -91,6 +91,62 @@ fi
 # System load per core
 load_per_core=$(awk "BEGIN {printf \"%.2f\", $load1 / $cpu_cores}")
 
+# IP Address Information
+# Get all local IP addresses (excluding loopback)
+local_ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | grep -v '^127\.' | tr '\n' ',' | sed 's/,$//' || echo "")
+
+# Get primary IP address (first non-loopback)
+primary_ip=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i!~"^127\.") {print $i; exit}}' || echo "")
+
+# Get external/public IP address (with timeout and fallback)
+external_ip="unknown"
+for service in "https://ipv4.icanhazip.com" "https://api.ipify.org" "https://checkip.amazonaws.com"; do
+    if external_ip=$(curl -s --connect-timeout 5 --max-time 10 "$service" 2>/dev/null | tr -d '\n'); then
+        # Validate it looks like an IP address
+        if [[ $external_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            break
+        fi
+    fi
+    external_ip="unknown"
+done
+
+# Get interface information
+interface_info=""
+if command -v ip >/dev/null 2>&1; then
+    # Use ip command if available
+    interface_info=$(ip addr show 2>/dev/null | awk '
+    /^[0-9]+:/ { iface = $2; gsub(/:/, "", iface) }
+    /inet / && !/127\.0\.0\.1/ {
+        ip = $2; gsub(/\/.*/, "", ip)
+        if (interface_info) interface_info = interface_info ","
+        interface_info = interface_info iface ":" ip
+    }
+    END { print interface_info }' || echo "")
+elif command -v ifconfig >/dev/null 2>&1; then
+    # Fallback to ifconfig
+    interface_info=$(ifconfig 2>/dev/null | awk '
+    /^[a-zA-Z0-9]+/ { iface = $1 }
+    /inet / && !/127\.0\.0\.1/ {
+        for(i=1;i<=NF;i++) if($i~/addr:/ || (i==2 && $i~/^[0-9]/)) {
+            ip = $i; gsub(/addr:/, "", ip)
+            if (interface_info) interface_info = interface_info ","
+            interface_info = interface_info iface ":" ip
+            break
+        }
+    }
+    END { print interface_info }' || echo "")
+fi
+
+# Escape strings for JSON
+escape_json() {
+    echo "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'
+}
+
+local_ips_escaped=$(escape_json "$local_ips")
+primary_ip_escaped=$(escape_json "$primary_ip")
+external_ip_escaped=$(escape_json "$external_ip")
+interface_info_escaped=$(escape_json "$interface_info")
+
 # Prepare JSON payload
 json_payload=$(cat <<EOF
 {
@@ -123,7 +179,11 @@ json_payload=$(cat <<EOF
   "os_version": "$os_version",
   "process_count": $process_count,
   "open_files": $open_files,
-  "tcp_connections": $tcp_connections
+  "tcp_connections": $tcp_connections,
+  "local_ips": "$local_ips_escaped",
+  "primary_ip": "$primary_ip_escaped",
+  "external_ip": "$external_ip_escaped",
+  "interface_info": "$interface_info_escaped"
 }
 EOF
 )
