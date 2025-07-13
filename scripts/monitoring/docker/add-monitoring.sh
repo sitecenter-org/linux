@@ -35,7 +35,7 @@ mkdir -p /opt/sitecenter
 # Download the monitoring script from GitHub
 echo "Downloading SiteCenter monitoring script..."
 if ! curl -sSL -o /opt/sitecenter/monitor.sh \
-    "https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/sitecenter-docker-stats.sh"; then
+    "https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/sitecenter-docker-stats.sh"; then
     echo "ERROR: Failed to download monitoring script from GitHub"
     exit 1
 fi
