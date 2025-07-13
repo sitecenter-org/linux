@@ -259,9 +259,10 @@ json_payload=$(cat <<EOF
 EOF
 )
 
-# Send metrics via curl
+# Send metrics via curl - SECURE VERSION
 curl -s -X POST \
-  "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/app-stats?secret=${SECRET_CODE}" \
+  "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/app-stats" \
   -H "Content-Type: application/json" \
+  -H "X-Monitor-Secret: ${SECRET_CODE}" \
   -d "$json_payload" \
   > /dev/null
