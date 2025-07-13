@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# add-monitoring.sh
-# https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/add-monitoring.sh
+# install-docker-stats.sh
+# https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/install-docker-stats.sh
 # Simple script to add SiteCenter monitoring to any existing container
 # Just copy this script and run it - no other changes needed!
 
 # Usage:
 # 1. Copy this script to your existing container
 # 2. Set environment variables
-# 3. Run: ./add-monitoring.sh
+# 3. Run: ./install-docker-stats.sh
 # 4. Your app runs normally, monitoring happens in background
 
 set -e

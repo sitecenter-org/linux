@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# add-monitoring.sh for Kubernetes
+# install-pod-stats.sh for Kubernetes
 # Enhanced version optimized for containerized environments
-# https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/k8s/add-monitoring.sh
+# https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/k8s/install-pod-stats
 
 set -e
 

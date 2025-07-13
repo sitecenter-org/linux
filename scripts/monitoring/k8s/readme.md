@@ -24,7 +24,7 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
         - |
-          wget -O /tmp/add-monitoring.sh https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/k8s/add-monitoring.sh
+          wget -O /tmp/add-monitoring.sh https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/k8s/install-pod-stats
           chmod +x /tmp/add-monitoring.sh
           /tmp/add-monitoring.sh
         env:
@@ -112,7 +112,7 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
         - |
-          wget -O /tmp/add-monitoring.sh https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/k8s/add-monitoring.sh
+          wget -O /tmp/add-monitoring.sh https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/k8s/install-pod-stats
           chmod +x /tmp/add-monitoring.sh
           /tmp/add-monitoring.sh
         env:

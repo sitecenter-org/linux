@@ -26,8 +26,8 @@ services:
       - APP_NAME=my-app
     command: >
       sh -c '
+        curl -sSL https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/install-docker-stats.sh | bash &&
         apk add --no-cache curl bash &&
-        curl -sSL https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/add-monitoring.sh | bash &&
         sleep infinity
       '
     restart: unless-stopped
@@ -55,7 +55,7 @@ COPY . .
 RUN npm install
 EXPOSE 3000
 # Change CMD to setup monitoring at runtime:
-CMD ["sh", "-c", "curl -sSL https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/add-monitoring.sh | bash && npm start"]
+CMD ["sh", "-c", "curl -sSL https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/install-docker-stats.sh | bash && npm start"]
 ```
 
 **Then run with environment variables:**
@@ -83,7 +83,7 @@ docker run -d \
   -e SITECENTER_MONITOR_CODE=mon456 \
   -e SITECENTER_SECRET_CODE=secret789 \
   my-app:latest \
-  sh -c 'curl -sSL https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/add-monitoring.sh | bash && exec npm start'
+  sh -c 'curl -sSL https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/install-docker-stats.sh | bash && exec npm start'
 ```
 
 **Total changes: 0 to your image**
@@ -112,7 +112,7 @@ services:
       - SITECENTER_SECRET_CODE=secret789
     command: >            # Override command
       sh -c '
-        curl -sSL https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/add-monitoring.sh | bash &&
+        curl -sSL https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/install-docker-stats.sh | bash &&
         exec npm start
       '
 ```

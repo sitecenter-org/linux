@@ -19,7 +19,7 @@ LOCAL_SCRIPT_PATH="$INSTALL_PATH/$SCRIPT_NAME"
 # Download the monitoring script
 echo "Downloading monitoring script to $LOCAL_SCRIPT_PATH..."
 
-curl -sL -o "$LOCAL_SCRIPT_PATH" "https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/$SCRIPT_NAME"
+curl -sL -o "$LOCAL_SCRIPT_PATH" "https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/$SCRIPT_NAME"
 
 chmod +x "$LOCAL_SCRIPT_PATH"
 
