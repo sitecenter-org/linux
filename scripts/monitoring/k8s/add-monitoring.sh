@@ -53,7 +53,7 @@ echo "Created monitoring directory: /opt/sitecenter"
 
 # Download the monitoring script
 echo "Downloading SiteCenter monitoring script..."
-SCRIPT_URL="https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/sitecenter-docker-stats.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/k8s/sitecenter-pod-stats.sh"
 
 if command -v curl >/dev/null 2>&1; then
     if ! curl -sSL -f -o /opt/sitecenter/monitor.sh "$SCRIPT_URL"; then
