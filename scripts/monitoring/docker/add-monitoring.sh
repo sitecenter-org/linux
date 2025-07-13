@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # add-monitoring.sh
+# https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/docker/add-monitoring.sh
 # Simple script to add SiteCenter monitoring to any existing container
 # Just copy this script and run it - no other changes needed!
 
