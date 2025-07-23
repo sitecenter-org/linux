@@ -100,9 +100,9 @@ echo "- App: $APP_NAME"
 # Test the monitoring script once
 echo "Testing monitoring script..."
 if /opt/sitecenter/monitor.sh "$SITECENTER_ACCOUNT_CODE" "$SITECENTER_MONITOR_CODE" "$SITECENTER_SECRET_CODE"; then
-    echo "✓ Monitoring test successful!"
+    echo "Monitoring test successful!"
 else
-    echo "✗ Monitoring test failed - check your credentials"
+    echo "Monitoring test failed - check your credentials"
 fi
 
 echo "Monitoring setup complete - your application can run normally now"
