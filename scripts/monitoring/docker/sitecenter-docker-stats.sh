@@ -18,6 +18,11 @@ if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   exit 1
 fi
 
+# Random startup delay to prevent API load spikes
+startup_delay=$((RANDOM % 21))  # 0-20 seconds
+#echo "Delaying ${startup_delay} seconds to distribute API calls..." >&2
+sleep $startup_delay
+
 # Container uptime (seconds) - actual container uptime, not host uptime
 container_uptime_seconds=$(awk '{print int($1)}' /proc/uptime)
 if [ -f /proc/1/stat ]; then
