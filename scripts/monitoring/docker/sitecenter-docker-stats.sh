@@ -58,6 +58,23 @@ swap_free_kb=${meminfo[SwapFree]}
 
 # Calculate memory usage percentage
 mem_used_kb=$((mem_total_kb - mem_available_kb))
+
+# Container memory (simplified)
+if [ -f /sys/fs/cgroup/memory.current ] && [ -f /sys/fs/cgroup/memory.max ]; then
+    # cgroups v2
+    mem_usage_bytes=$(cat /sys/fs/cgroup/memory.current)
+    mem_limit_bytes=$(cat /sys/fs/cgroup/memory.max)
+    mem_total_kb=$((mem_limit_bytes / 1024))
+    mem_used_kb=$((mem_usage_bytes / 1024))
+elif [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
+    # cgroups v1
+    mem_usage_bytes=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)
+    mem_limit_bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+    mem_total_kb=$((mem_limit_bytes / 1024))
+    mem_used_kb=$((mem_usage_bytes / 1024))
+fi
+
+# Calculate percentage
 mem_usage_percent=$(awk "BEGIN {printf \"%.2f\", ($mem_used_kb / $mem_total_kb) * 100}")
 
 # CPU ticks (container CPU usage)
