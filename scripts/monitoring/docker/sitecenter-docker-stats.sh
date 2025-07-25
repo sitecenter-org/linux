@@ -18,8 +18,25 @@ if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   exit 1
 fi
 
-# Container uptime (seconds) - from container start, not host boot
+# Container uptime (seconds) - actual container uptime, not host uptime
 container_uptime_seconds=$(awk '{print int($1)}' /proc/uptime)
+if [ -f /proc/1/stat ]; then
+    # Get process start time in clock ticks since boot (field 22 in /proc/1/stat)
+    process_start_ticks=$(awk '{print $22}' /proc/1/stat 2>/dev/null || echo "0")
+    # Get clock ticks per second
+    clock_ticks_per_sec=$(getconf CLK_TCK 2>/dev/null || echo "100")
+    # Get system uptime
+    system_uptime=$(awk '{print $1}' /proc/uptime)
+    # Calculate container uptime
+    if [ "$process_start_ticks" -gt 0 ] && [ "$clock_ticks_per_sec" -gt 0 ]; then
+        process_start_seconds=$(awk "BEGIN {printf \"%.0f\", $process_start_ticks / $clock_ticks_per_sec}")
+        container_uptime_seconds=$(awk "BEGIN {printf \"%.0f\", $system_uptime - $process_start_seconds}")
+        # Ensure uptime is not negative (edge case protection)
+        if [ "$container_uptime_seconds" -lt 0 ]; then
+            container_uptime_seconds=0
+        fi
+    fi
+fi
 
 # Load averages and process info
 read load1 load5 load15 running_processes total_processes _ < /proc/loadavg
