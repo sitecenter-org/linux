@@ -41,57 +41,119 @@ fi
 # Load averages and process info
 read load1 load5 load15 running_processes total_processes _ < /proc/loadavg
 
-# Memory info (container memory limits and usage)
+# Robust memory calculation - works without cgroups
+# Handles the "inf" issue and provides meaningful container stats
+
+# Read /proc/meminfo safely
 declare -A meminfo
 while read -r key value _; do
     key=${key%:}
-    meminfo[$key]=$value
+    # Only store numeric values
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+        meminfo[$key]=$value
+    fi
 done < /proc/meminfo
 
-mem_total_kb=${meminfo[MemTotal]}
-mem_free_kb=${meminfo[MemFree]}
-mem_available_kb=${meminfo[MemAvailable]}
-mem_buffers_kb=${meminfo[Buffers]}
-mem_cached_kb=${meminfo[Cached]}
-swap_total_kb=${meminfo[SwapTotal]}
-swap_free_kb=${meminfo[SwapFree]}
+# Set defaults to avoid division by zero
+mem_total_kb=${meminfo[MemTotal]:-0}
+mem_free_kb=${meminfo[MemFree]:-0}
+mem_available_kb=${meminfo[MemAvailable]:-${mem_free_kb}}
+mem_buffers_kb=${meminfo[Buffers]:-0}
+mem_cached_kb=${meminfo[Cached]:-0}
+swap_total_kb=${meminfo[SwapTotal]:-0}
+swap_free_kb=${meminfo[SwapFree]:-0}
 
-# Calculate memory usage percentage from host initially
-mem_used_kb=$((mem_total_kb - mem_available_kb))
-
-# Container memory (with proper error handling)
-if [ -f /sys/fs/cgroup/memory.current ] && [ -f /sys/fs/cgroup/memory.max ]; then
-    # cgroups v2
-    mem_usage_bytes=$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo "0")
-    mem_limit_raw=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "max")
-
-    # Check if limit is "max" (unlimited) or a valid number
-    if [ "$mem_limit_raw" != "max" ] && [ "$mem_limit_raw" -gt 0 ] 2>/dev/null; then
-        mem_limit_bytes=$mem_limit_raw
-        mem_total_kb=$((mem_limit_bytes / 1024))
-        mem_used_kb=$((mem_usage_bytes / 1024))
-    fi
-    # If "max", keep using host memory values
-
-elif [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
-    # cgroups v1
-    mem_usage_bytes=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || echo "0")
-    mem_limit_bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "0")
-
-    # Check if limit is reasonable (not the default unlimited value)
-    if [ "$mem_limit_bytes" -gt 0 ] && [ "$mem_limit_bytes" -lt 9223372036854775807 ] 2>/dev/null; then
-        mem_total_kb=$((mem_limit_bytes / 1024))
-        mem_used_kb=$((mem_usage_bytes / 1024))
-    fi
-    # If unlimited, keep using host memory values
+# Validate we have basic memory info
+if [ "$mem_total_kb" -eq 0 ]; then
+    echo "ERROR: Cannot read memory information" >&2
+    mem_total_kb=1  # Prevent division by zero
+    mem_available_kb=1
 fi
 
-# Calculate percentage with zero-division protection
-if [ "$mem_total_kb" -gt 0 ] 2>/dev/null; then
-    mem_usage_percent=$(awk "BEGIN {printf \"%.2f\", ($mem_used_kb / $mem_total_kb) * 100}")
+# Calculate used memory
+mem_used_kb=$((mem_total_kb - mem_available_kb))
+
+# Ensure mem_used_kb is not negative (edge case protection)
+if [ "$mem_used_kb" -lt 0 ]; then
+    mem_used_kb=0
+fi
+
+# Try to get container memory limits from various sources
+container_mem_limit_kb=0
+
+# Method 1: Try cgroups v2
+if [ -f /sys/fs/cgroup/memory.max ]; then
+    mem_limit_raw=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "max")
+    if [ "$mem_limit_raw" != "max" ] && [[ "$mem_limit_raw" =~ ^[0-9]+$ ]] && [ "$mem_limit_raw" -gt 0 ]; then
+        container_mem_limit_kb=$((mem_limit_raw / 1024))
+        if [ -f /sys/fs/cgroup/memory.current ]; then
+            mem_usage_bytes=$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo "0")
+            if [[ "$mem_usage_bytes" =~ ^[0-9]+$ ]]; then
+                mem_used_kb=$((mem_usage_bytes / 1024))
+            fi
+        fi
+    fi
+fi
+
+# Method 2: Try cgroups v1 if v2 didn't work
+if [ "$container_mem_limit_kb" -eq 0 ] && [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+    mem_limit_bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "0")
+    # Check if it's a reasonable limit (not the default huge number)
+    if [[ "$mem_limit_bytes" =~ ^[0-9]+$ ]] && [ "$mem_limit_bytes" -gt 0 ] && [ "$mem_limit_bytes" -lt 9223372036854775807 ]; then
+        container_mem_limit_kb=$((mem_limit_bytes / 1024))
+        if [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
+            mem_usage_bytes=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || echo "0")
+            if [[ "$mem_usage_bytes" =~ ^[0-9]+$ ]]; then
+                mem_used_kb=$((mem_usage_bytes / 1024))
+            fi
+        fi
+    fi
+fi
+
+# Method 3: Try environment variables (sometimes set by Kubernetes)
+if [ "$container_mem_limit_kb" -eq 0 ] && [ -n "$MEMORY_LIMIT" ]; then
+    # Parse memory limit from env var (could be like "512Mi", "1Gi", "1073741824")
+    if [[ "$MEMORY_LIMIT" =~ ^([0-9]+)(Mi|Gi|Ki|M|G|K)?$ ]]; then
+        num="${BASH_REMATCH[1]}"
+        unit="${BASH_REMATCH[2]}"
+        case "$unit" in
+            "Gi"|"G") container_mem_limit_kb=$((num * 1024 * 1024)) ;;
+            "Mi"|"M") container_mem_limit_kb=$((num * 1024)) ;;
+            "Ki"|"K") container_mem_limit_kb=$num ;;
+            "") container_mem_limit_kb=$((num / 1024)) ;;  # Assume bytes
+        esac
+    fi
+fi
+
+# Use container limit if found, otherwise use host memory
+if [ "$container_mem_limit_kb" -gt 0 ]; then
+    mem_total_kb=$container_mem_limit_kb
+    echo "Using container memory limit: ${container_mem_limit_kb}KB" >&2
+else
+    echo "No container memory limit found, using host memory: ${mem_total_kb}KB" >&2
+fi
+
+# Calculate percentage with robust division-by-zero protection
+if [ "$mem_total_kb" -gt 0 ]; then
+    mem_usage_percent=$(awk "BEGIN {
+        if ($mem_total_kb > 0) {
+            printf \"%.2f\", ($mem_used_kb / $mem_total_kb) * 100
+        } else {
+            print \"0.00\"
+        }
+    }")
 else
     mem_usage_percent="0.00"
 fi
+
+# Validate the result is not inf or nan
+if [[ "$mem_usage_percent" == "inf" ]] || [[ "$mem_usage_percent" == "nan" ]] || [[ "$mem_usage_percent" == "-nan" ]]; then
+    mem_usage_percent="0.00"
+fi
+
+# Debug output (remove in production)
+echo "DEBUG: mem_total_kb=$mem_total_kb, mem_used_kb=$mem_used_kb, mem_usage_percent=$mem_usage_percent" >&2
+
 
 # CPU ticks (container CPU usage)
 read cpu user nice system idle iowait _ < /proc/stat
