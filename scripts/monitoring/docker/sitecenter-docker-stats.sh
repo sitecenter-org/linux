@@ -102,10 +102,10 @@ elif [ -f /etc/debian_version ]; then
 fi
 
 # Process count (in container)
-process_count=$(echo "$running_processes" | cut -d'/' -f2)
+process_count=$(ps -eo pid --no-headers 2>/dev/null | wc -l 2>/dev/null || echo "0")
 
-# Open file descriptors (container)
-open_files=$(awk '{print $1}' /proc/sys/fs/file-nr 2>/dev/null || echo "0")
+# Open file descriptors (container-specific)
+open_files=$(ls -1 /proc/*/fd 2>/dev/null | wc -l 2>/dev/null || echo "0")
 
 # TCP connections count (container) - robust version
 tcp_connections=0
