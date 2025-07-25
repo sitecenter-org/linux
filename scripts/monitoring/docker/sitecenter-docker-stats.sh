@@ -107,11 +107,20 @@ process_count=$(echo "$running_processes" | cut -d'/' -f2)
 # Open file descriptors (container)
 open_files=$(awk '{print $1}' /proc/sys/fs/file-nr 2>/dev/null || echo "0")
 
-# TCP connections count (container)
-tcp_connections=$(ss -t 2>/dev/null | wc -l 2>/dev/null || netstat -t 2>/dev/null | wc -l 2>/dev/null || echo "0")
-# Subtract header line if command succeeded
-if [ "$tcp_connections" -gt 0 ]; then
-    tcp_connections=$((tcp_connections - 1))
+# TCP connections count (container) - robust version
+tcp_connections=0
+
+# Try /proc/net/tcp first (most reliable in containers)
+if [ -r /proc/net/tcp ]; then
+    tcp4_count=$(awk 'NR>1 {count++} END {print count+0}' /proc/net/tcp 2>/dev/null)
+    tcp6_count=$(awk 'NR>1 {count++} END {print count+0}' /proc/net/tcp6 2>/dev/null)
+    tcp_connections=$((tcp4_count + tcp6_count))
+# Fallback to ss if available
+elif command -v ss >/dev/null 2>&1; then
+    tcp_connections=$(ss -t state established 2>/dev/null | wc -l 2>/dev/null || echo "0")
+# Last resort: netstat
+elif command -v netstat >/dev/null 2>&1; then
+    tcp_connections=$(netstat -t 2>/dev/null | awk 'NR>2 && /ESTABLISHED/ {count++} END {print count+0}')
 fi
 
 # System load per core
