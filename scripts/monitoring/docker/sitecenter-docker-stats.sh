@@ -56,26 +56,42 @@ mem_cached_kb=${meminfo[Cached]}
 swap_total_kb=${meminfo[SwapTotal]}
 swap_free_kb=${meminfo[SwapFree]}
 
-# Calculate memory usage percentage
+# Calculate memory usage percentage from host initially
 mem_used_kb=$((mem_total_kb - mem_available_kb))
 
-# Container memory (simplified)
+# Container memory (with proper error handling)
 if [ -f /sys/fs/cgroup/memory.current ] && [ -f /sys/fs/cgroup/memory.max ]; then
     # cgroups v2
-    mem_usage_bytes=$(cat /sys/fs/cgroup/memory.current)
-    mem_limit_bytes=$(cat /sys/fs/cgroup/memory.max)
-    mem_total_kb=$((mem_limit_bytes / 1024))
-    mem_used_kb=$((mem_usage_bytes / 1024))
+    mem_usage_bytes=$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo "0")
+    mem_limit_raw=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "max")
+
+    # Check if limit is "max" (unlimited) or a valid number
+    if [ "$mem_limit_raw" != "max" ] && [ "$mem_limit_raw" -gt 0 ] 2>/dev/null; then
+        mem_limit_bytes=$mem_limit_raw
+        mem_total_kb=$((mem_limit_bytes / 1024))
+        mem_used_kb=$((mem_usage_bytes / 1024))
+    fi
+    # If "max", keep using host memory values
+
 elif [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
     # cgroups v1
-    mem_usage_bytes=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)
-    mem_limit_bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
-    mem_total_kb=$((mem_limit_bytes / 1024))
-    mem_used_kb=$((mem_usage_bytes / 1024))
+    mem_usage_bytes=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || echo "0")
+    mem_limit_bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "0")
+
+    # Check if limit is reasonable (not the default unlimited value)
+    if [ "$mem_limit_bytes" -gt 0 ] && [ "$mem_limit_bytes" -lt 9223372036854775807 ] 2>/dev/null; then
+        mem_total_kb=$((mem_limit_bytes / 1024))
+        mem_used_kb=$((mem_usage_bytes / 1024))
+    fi
+    # If unlimited, keep using host memory values
 fi
 
-# Calculate percentage
-mem_usage_percent=$(awk "BEGIN {printf \"%.2f\", ($mem_used_kb / $mem_total_kb) * 100}")
+# Calculate percentage with zero-division protection
+if [ "$mem_total_kb" -gt 0 ] 2>/dev/null; then
+    mem_usage_percent=$(awk "BEGIN {printf \"%.2f\", ($mem_used_kb / $mem_total_kb) * 100}")
+else
+    mem_usage_percent="0.00"
+fi
 
 # CPU ticks (container CPU usage)
 read cpu user nice system idle iowait _ < /proc/stat
