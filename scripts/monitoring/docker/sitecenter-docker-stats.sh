@@ -104,14 +104,19 @@ fi
 if [ "$container_mem_limit_kb" -eq 0 ] && [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
     mem_limit_bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "0")
     # Check if it's a reasonable limit (not the default huge number)
-    if [[ "$mem_limit_bytes" =~ ^[0-9]+$ ]] && [ "$mem_limit_bytes" -gt 0 ] && [ "$mem_limit_bytes" -lt 9223372036854775807 ]; then
+    # Set a more realistic upper bound: 1TB = 1099511627776 bytes
+    # This catches Docker for Windows "unlimited" values
+    if [[ "$mem_limit_bytes" =~ ^[0-9]+$ ]] && [ "$mem_limit_bytes" -gt 0 ] && [ "$mem_limit_bytes" -lt 1099511627776 ]; then
         container_mem_limit_kb=$((mem_limit_bytes / 1024))
+        echo "Found cgroups v1 memory limit: ${container_mem_limit_kb}KB" >&2
         if [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
             mem_usage_bytes=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null || echo "0")
             if [[ "$mem_usage_bytes" =~ ^[0-9]+$ ]]; then
                 mem_used_kb=$((mem_usage_bytes / 1024))
             fi
         fi
+    else
+        echo "Ignoring unrealistic cgroups memory limit: ${mem_limit_bytes} bytes (likely Docker for Windows unlimited)" >&2
     fi
 fi
 
