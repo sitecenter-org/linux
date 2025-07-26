@@ -12,21 +12,21 @@ if [ -n "$SITECENTER_ACCOUNT" ] && [ -n "$SITECENTER_MONITOR" ] && [ -n "$SITECE
 # Create environment file for cron with current Docker environment variables
     cat > /usr/local/bin/sitecenter-env.sh << EOF
 #!/bin/bash
-export NODE_NAME="${NODE_NAME:-unknown}"
-export APP_NAME="${APP_NAME:-unknown}"
-export APP_VERSION="${APP_VERSION:-unknown}"
-export POD_NAME="${POD_NAME:-unknown}"
-export POD_NAMESPACE="${POD_NAMESPACE:-unknown}"
-export POD_IP="${POD_IP:-unknown}"
-export DEPLOYMENT_NAME="${DEPLOYMENT_NAME:-unknown}"
-export REPLICA_SET_NAME="${REPLICA_SET_NAME:-unknown}"
-export CONTAINER_NAME="${CONTAINER_NAME:-unknown}"
-export CONTAINER_ID="${CONTAINER_ID:-unknown}"
+export NODE_NAME="${NODE_NAME:-}"
+export APP_NAME="${APP_NAME:-}"
+export APP_VERSION="${APP_VERSION:-}"
+export POD_NAME="${POD_NAME:-}"
+export POD_NAMESPACE="${POD_NAMESPACE:-}"
+export POD_IP="${POD_IP:-}"
+export DEPLOYMENT_NAME="${DEPLOYMENT_NAME:-}"
+export REPLICA_SET_NAME="${REPLICA_SET_NAME:-}"
+export CONTAINER_NAME="${CONTAINER_NAME:-}"
+export CONTAINER_ID="${CONTAINER_ID:-}"
 export MEMORY_LIMIT="${MEMORY_LIMIT:-}"
 export SITECENTER_ACCOUNT="${SITECENTER_ACCOUNT:-}"
 export SITECENTER_MONITOR="${SITECENTER_MONITOR:-}"
 export SITECENTER_SECRET="${SITECENTER_SECRET:-}"
-export DOCKER_HOST_NAME="${DOCKER_HOST_NAME:-unknown}"
+export DOCKER_HOST_NAME="${DOCKER_HOST_NAME:-}"
 EOF
     chmod +x /usr/local/bin/sitecenter-env.sh
 
