@@ -408,6 +408,7 @@ json_payload=$(cat <<EOF
 EOF
 )
 
+echo "DEBUG: sending json to https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/app-stats"
 # Send metrics via curl
 curl -s -X POST \
   "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/app-stats" \
