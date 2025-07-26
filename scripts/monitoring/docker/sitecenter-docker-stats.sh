@@ -13,9 +13,9 @@ if [ -f /usr/local/bin/sitecenter-env.sh ]; then
     . /usr/local/bin/sitecenter-env.sh
 fi
 
-[ -n "$1" ] && ACCOUNT_CODE="$1"
-[ -n "$2" ] && MONITOR_CODE="$2"
-[ -n "$3" ] && SECRET_CODE="$3"
+ACCOUNT_CODE="${1:-SITECENTER_ACCOUNT}"
+MONITOR_CODE="${2:-SITECENTER_MONITOR}"
+SECRET_CODE="${3:-SITECENTER_SECRET}"
 
 if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET_CODE"

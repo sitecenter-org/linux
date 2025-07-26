@@ -38,6 +38,10 @@ EOF
     } | crontab -
 
     echo "Monitoring active (every minute)"
+    echo "NODE_NAME:$NODE_NAME"
+    echo "POD_NAME:$POD_NAME"
+    echo "SITECENTER_ACCOUNT:$SITECENTER_ACCOUNT"
+    echo "SITECENTER_MONITOR:$SITECENTER_MONITOR"
 else
     echo "SiteCenter monitoring disabled (missing env vars)"
 fi
