@@ -238,6 +238,18 @@ container_ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | gr
 # Get primary container IP address (first non-loopback)
 primary_ip=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i!~"^127\\.") {print $i; exit}}' || echo "")
 
+# Get external/public IP address (with timeout and fallback)
+external_ip="unknown"
+for service in "https://ipv4.icanhazip.com" "https://api.ipify.org" "https://checkip.amazonaws.com"; do
+    if external_ip=$(curl -s --connect-timeout 5 --max-time 10 "$service" 2>/dev/null | tr -d '\n'); then
+        # Validate it looks like an IP address
+        if [[ $external_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            break
+        fi
+    fi
+    external_ip="unknown"
+done
+
 # Container interface information
 interface_info=""
 if command -v ip >/dev/null 2>&1; then
@@ -298,6 +310,7 @@ escape_json() {
 
 container_ips_escaped=$(escape_json "$container_ips")
 primary_ip_escaped=$(escape_json "$primary_ip")
+external_ip_escaped=$(escape_json "$external_ip")
 interface_info_escaped=$(escape_json "$interface_info")
 container_name_escaped=$(escape_json "$container_name")
 container_id_escaped=$(escape_json "$container_id")
@@ -376,6 +389,7 @@ json_payload=$(cat <<EOF
   "net_tx_bytes": $net_tx_bytes,
   "container_ips": "$container_ips_escaped",
   "primary_ip": "$primary_ip_escaped",
+  "external_ip": "$external_ip_escaped",
   "interface_info": "$interface_info_escaped",
   "process_count": $process_count,
   "open_files": $open_files,
