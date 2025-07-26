@@ -166,7 +166,7 @@ if [[ "$mem_usage_percent" == "inf" ]] || [[ "$mem_usage_percent" == "nan" ]] ||
 fi
 
 # Debug output (remove in production)
-echo "DEBUG: mem_total_kb=$mem_total_kb, mem_used_kb=$mem_used_kb, mem_usage_percent=$mem_usage_percent" >&2
+#echo "DEBUG: mem_total_kb=$mem_total_kb, mem_used_kb=$mem_used_kb, mem_usage_percent=$mem_usage_percent" >&2
 
 
 # CPU ticks (container CPU usage)
@@ -408,7 +408,7 @@ json_payload=$(cat <<EOF
 EOF
 )
 
-echo "DEBUG: sending json to https://sitecenter.app/api/pub/v1/a/$ACCOUNT_CODE/monitor/$MONITOR_CODE/app-stats"
+#echo "DEBUG: sending json to https://sitecenter.app/api/pub/v1/a/$ACCOUNT_CODE/monitor/$MONITOR_CODE/app-stats"
 # Send metrics via curl
 curl -s -X POST \
   "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/app-stats" \
