@@ -1,17 +1,21 @@
 #!/bin/bash
 
-# sitecenter-container-stats.sh
-# Collects container statistics and sends them to SiteCenter API
+# sitecenter-docker-stats.sh
+# Collects docker statistics and sends them to SiteCenter API
 # Compatible with host stats flat JSON format
 
 # Usage:
-# ./sitecenter-container-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
+# ./sitecenter-docker-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
 
 set -e
+# Source environment variables
+if [ -f /usr/local/bin/sitecenter-env.sh ]; then
+    . /usr/local/bin/sitecenter-env.sh
+fi
 
-ACCOUNT_CODE="$1"
-MONITOR_CODE="$2"
-SECRET_CODE="$3"
+[ -n "$1" ] && ACCOUNT_CODE="$1"
+[ -n "$2" ] && MONITOR_CODE="$2"
+[ -n "$3" ] && SECRET_CODE="$3"
 
 if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET_CODE"
