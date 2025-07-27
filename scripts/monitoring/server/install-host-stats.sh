@@ -2,7 +2,7 @@
 # SiteCenter Host Monitoring Installer
 # Note: Run with the same user privileges that will execute the cron job
 # (typically 'sudo' for system-wide monitoring)
-
+# Version: 2025-07-26-16-00
 set -e
 
 ACCOUNT_CODE="$1"
