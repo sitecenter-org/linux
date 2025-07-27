@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-16-11
+# Version: 2025-07-26-16-17
 
 set -e
 # Source environment variables
@@ -109,8 +109,14 @@ collect_network_stats() {
             iface=$(echo "$line" | awk -F: '{print $1}' | tr -d ' ')
             stats=$(echo "$line" | awk -F: '{print $2}')
 
-            # Parse RX stats (bytes, packets, errors, dropped)
+            # Parse RX stats (bytes, packets, errors, dropped) with validation
             read rx_bytes rx_packets rx_errs rx_drop _ _ _ _ tx_bytes tx_packets tx_errs tx_drop _ <<< "$stats"
+
+            # Validate and default empty values to 0
+            rx_bytes=${rx_bytes:-0}; tx_bytes=${tx_bytes:-0}
+            rx_packets=${rx_packets:-0}; tx_packets=${tx_packets:-0}
+            rx_errs=${rx_errs:-0}; tx_errs=${tx_errs:-0}
+            rx_drop=${rx_drop:-0}; tx_drop=${tx_drop:-0}
 
             current_rx_bytes=$((current_rx_bytes + rx_bytes))
             current_tx_bytes=$((current_tx_bytes + tx_bytes))
@@ -134,11 +140,19 @@ collect_network_stats() {
     if [ -f "$NET_STATS_FILE" ]; then
         # Read previous stats
         local prev_data
-        if prev_data=$(cat "$NET_STATS_FILE" 2>/dev/null); then
+        if prev_data=$(cat "$NET_STATS_FILE" 2>/dev/null) && [ -n "$prev_data" ]; then
             local prev_time prev_rx_bytes prev_tx_bytes prev_rx_packets prev_tx_packets
             read prev_time prev_rx_bytes prev_tx_bytes prev_rx_packets prev_tx_packets <<< "$prev_data"
 
-            # Calculate time interval
+            # Validate previous values
+            prev_time=${prev_time:-0}
+            prev_rx_bytes=${prev_rx_bytes:-0}
+            prev_tx_bytes=${prev_tx_bytes:-0}
+            prev_rx_packets=${prev_rx_packets:-0}
+            prev_tx_packets=${prev_tx_packets:-0}
+
+            # Calculate time interval if previous time is valid
+            if [ "$prev_time" -gt 0 ] && [ "$current_time" -gt "$prev_time" ]; then
             time_interval=$((current_time - prev_time))
 
             # Calculate rates (only if time interval is reasonable: 30 seconds to 10 minutes)
@@ -155,6 +169,7 @@ collect_network_stats() {
                 [ "$net_tx_packets_per_sec" -lt 0 ] && net_tx_packets_per_sec=0
             fi
         fi
+    fi
     fi
 
     # Store current stats for next run
@@ -197,15 +212,26 @@ get_interface_details() {
             local speed=0
             if [ -f "$iface_path/speed" ]; then
                 speed=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
-                # Convert negative speeds (unknown) to 0
-                [ "$speed" -lt 0 ] && speed=0
+                # Validate speed is numeric and handle negative speeds (unknown)
+                if ! [[ "$speed" =~ ^[0-9]+$ ]] || [ "$speed" -lt 0 ]; then
+                    speed=0
+                fi
             fi
 
             # Get interface statistics
             local rx_bytes=0 tx_bytes=0
-            [ -f "$iface_path/statistics/rx_bytes" ] && rx_bytes=$(cat "$iface_path/statistics/rx_bytes" 2>/dev/null || echo "0")
-            [ -f "$iface_path/statistics/tx_bytes" ] && tx_bytes=$(cat "$iface_path/statistics/tx_bytes" 2>/dev/null || echo "0")
+            if [ -f "$iface_path/statistics/rx_bytes" ]; then
+                rx_bytes=$(cat "$iface_path/statistics/rx_bytes" 2>/dev/null || echo "0")
+                # Validate rx_bytes is numeric
+                [[ "$rx_bytes" =~ ^[0-9]+$ ]] || rx_bytes=0
+            fi
+            if [ -f "$iface_path/statistics/tx_bytes" ]; then
+                tx_bytes=$(cat "$iface_path/statistics/tx_bytes" 2>/dev/null || echo "0")
+                # Validate tx_bytes is numeric
+                [[ "$tx_bytes" =~ ^[0-9]+$ ]] || tx_bytes=0
+            fi
 
+            # Only count interfaces with valid speed
             if [ "$speed" -gt 0 ]; then
                 total_interface_speed=$((total_interface_speed + speed))
                 active_interfaces=$((active_interfaces + 1))
@@ -229,7 +255,12 @@ calculate_network_utilization() {
     local tx_utilization=0
     local total_utilization=0
 
-    if [ "$total_interface_speed" -gt 0 ] && [ "$net_rx_bytes_per_sec" -gt 0 ]; then
+    # Validate inputs are numeric and greater than 0
+    if [[ "$total_interface_speed" =~ ^[0-9]+$ ]] && [ "$total_interface_speed" -gt 0 ] && \
+       [[ "$net_rx_bytes_per_sec" =~ ^[0-9]+$ ]] && [[ "$net_tx_bytes_per_sec" =~ ^[0-9]+$ ]; then
+
+        # Only calculate if we have actual traffic
+        if [ "$net_rx_bytes_per_sec" -gt 0 ] || [ "$net_tx_bytes_per_sec" -gt 0 ]; then
         # Convert bytes/sec to Mbps and calculate percentage
         local rx_mbps=$(awk "BEGIN {printf \"%.2f\", ($net_rx_bytes_per_sec * 8) / 1000000}")
         local tx_mbps=$(awk "BEGIN {printf \"%.2f\", ($net_tx_bytes_per_sec * 8) / 1000000}")
@@ -239,6 +270,7 @@ calculate_network_utilization() {
 
         # Total utilization is the higher of RX or TX (duplex consideration)
         total_utilization=$(awk "BEGIN {printf \"%.2f\", ($rx_utilization > $tx_utilization) ? $rx_utilization : $tx_utilization}")
+    fi
     fi
 
     export net_rx_utilization=$rx_utilization
