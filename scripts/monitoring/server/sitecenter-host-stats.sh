@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-16-54
+# Version: 2025-07-26-18-03
 
 set -e
 # Source environment variables
@@ -23,6 +23,9 @@ NET_STATS_FILE="/tmp/sitecenter-net-stats-${MONITOR_CODE}.tmp"
 
 # Current timestamp
 current_time=$(date +%s)
+
+# Capture the exact collection timestamp in UTC (ISO 8601 format for Java)
+collection_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
 
 # Uptime (seconds)
 uptime_seconds=$(awk '{print int($1)}' /proc/uptime)
@@ -491,7 +494,8 @@ json_payload=$(cat <<EOF
   "local_ips": "$local_ips_escaped",
   "primary_ip": "$primary_ip_escaped",
   "external_ip": "$external_ip_escaped",
-  "interface_info": "$interface_details_escaped"
+  "interface_info": "$interface_details_escaped",
+  "timestamp": "$collection_timestamp"
 }
 EOF
 )

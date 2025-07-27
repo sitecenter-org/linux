@@ -1,11 +1,11 @@
 #!/bin/bash
-
 # sitecenter-docker-stats.sh
 # Collects docker statistics and sends them to SiteCenter API
 # Compatible with host stats flat JSON format
 
 # Usage:
 # ./sitecenter-docker-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
+# Version: 2025-07-26-18-03
 
 set -e
 # Source environment variables
@@ -21,6 +21,9 @@ if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET_CODE"
   exit 1
 fi
+
+# Capture the exact collection timestamp in UTC (ISO 8601 format for Java)
+collection_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
 
 # Container uptime (seconds) - actual container uptime, not host uptime
 container_uptime_seconds=$(awk '{print int($1)}' /proc/uptime)
@@ -398,7 +401,8 @@ json_payload=$(cat <<EOF
   "java_threads": $java_threads,
   "kernel_version": "$kernel_version",
   "os_name": "$os_name_escaped",
-  "os_version": "$os_version_escaped"
+  "os_version": "$os_version_escaped",
+  "timestamp": "$collection_timestamp"
 }
 EOF
 )
