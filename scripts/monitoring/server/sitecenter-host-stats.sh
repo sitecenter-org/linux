@@ -1,7 +1,7 @@
 #!/bin/bash
-
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
+# Version: 2025-07-26-15-18
 
 set -e
 
@@ -34,6 +34,32 @@ mem_buffers_kb=${meminfo[Buffers]}
 mem_cached_kb=${meminfo[Cached]}
 swap_total_kb=${meminfo[SwapTotal]}
 swap_free_kb=${meminfo[SwapFree]}
+
+# Calculate used memory
+mem_used_kb=$((mem_total_kb - mem_available_kb))
+# Ensure mem_used_kb is not negative (edge case protection)
+if [ "$mem_used_kb" -lt 0 ]; then
+    mem_used_kb=0
+fi
+
+# Calculate percentage with robust division-by-zero protection
+if [ "$mem_total_kb" -gt 0 ]; then
+    mem_usage_percent=$(awk "BEGIN {
+        if ($mem_total_kb > 0) {
+            printf \"%.2f\", ($mem_used_kb / $mem_total_kb) * 100
+        } else {
+            print \"0.00\"
+        }
+    }")
+else
+    mem_usage_percent="0.00"
+fi
+
+# Validate the result is not inf or nan
+if [[ "$mem_usage_percent" == "inf" ]] || [[ "$mem_usage_percent" == "nan" ]] || [[ "$mem_usage_percent" == "-nan" ]]; then
+    mem_usage_percent="0.00"
+fi
+
 
 # CPU ticks
 read cpu user nice system idle iowait _ < /proc/stat
@@ -167,6 +193,8 @@ json_payload=$(cat <<EOF
   "mem_total_kb": $mem_total_kb,
   "mem_free_kb": $mem_free_kb,
   "mem_available_kb": $mem_available_kb,
+  "mem_used_kb": $mem_used_kb,
+  "mem_usage_percent": $mem_usage_percent,
   "mem_buffers_kb": $mem_buffers_kb,
   "mem_cached_kb": $mem_cached_kb,
   "swap_total_kb": $swap_total_kb,
