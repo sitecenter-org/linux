@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-16-17
+# Version: 2025-07-26-16-20
 
 set -e
 # Source environment variables
@@ -211,24 +211,28 @@ get_interface_details() {
             # Get interface speed (in Mbps)
             local speed=0
             if [ -f "$iface_path/speed" ]; then
-                speed=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
+                local speed_raw=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
                 # Validate speed is numeric and handle negative speeds (unknown)
-                if ! [[ "$speed" =~ ^[0-9]+$ ]] || [ "$speed" -lt 0 ]; then
-                    speed=0
+                if [[ "$speed_raw" =~ ^-?[0-9]+$ ]]; then
+                    if [ "$speed_raw" -gt 0 ]; then
+                        speed=$speed_raw
+                    fi
                 fi
             fi
 
             # Get interface statistics
             local rx_bytes=0 tx_bytes=0
             if [ -f "$iface_path/statistics/rx_bytes" ]; then
-                rx_bytes=$(cat "$iface_path/statistics/rx_bytes" 2>/dev/null || echo "0")
-                # Validate rx_bytes is numeric
-                [[ "$rx_bytes" =~ ^[0-9]+$ ]] || rx_bytes=0
+                local rx_raw=$(cat "$iface_path/statistics/rx_bytes" 2>/dev/null || echo "0")
+                if [[ "$rx_raw" =~ ^[0-9]+$ ]]; then
+                    rx_bytes=$rx_raw
+                fi
             fi
             if [ -f "$iface_path/statistics/tx_bytes" ]; then
-                tx_bytes=$(cat "$iface_path/statistics/tx_bytes" 2>/dev/null || echo "0")
-                # Validate tx_bytes is numeric
-                [[ "$tx_bytes" =~ ^[0-9]+$ ]] || tx_bytes=0
+                local tx_raw=$(cat "$iface_path/statistics/tx_bytes" 2>/dev/null || echo "0")
+                if [[ "$tx_raw" =~ ^[0-9]+$ ]]; then
+                    tx_bytes=$tx_raw
+                fi
             fi
 
             # Only count interfaces with valid speed
@@ -256,9 +260,26 @@ calculate_network_utilization() {
     local total_utilization=0
 
     # Validate inputs are numeric and greater than 0
-    if [[ "$total_interface_speed" =~ ^[0-9]+$ ]] && [ "$total_interface_speed" -gt 0 ] && \
-       [[ "$net_rx_bytes_per_sec" =~ ^[0-9]+$ ]] && [[ "$net_tx_bytes_per_sec" =~ ^[0-9]+$ ]; then
+    local speed_valid=0
+    local rx_valid=0
+    local tx_valid=0
 
+    # Check if total_interface_speed is valid
+    if [[ "$total_interface_speed" =~ ^[0-9]+$ ]] && [ "$total_interface_speed" -gt 0 ]; then
+        speed_valid=1
+    fi
+
+    # Check if rate values are valid numbers
+    if [[ "$net_rx_bytes_per_sec" =~ ^[0-9]+$ ]]; then
+        rx_valid=1
+    fi
+
+    if [[ "$net_tx_bytes_per_sec" =~ ^[0-9]+$ ]]; then
+        tx_valid=1
+    fi
+
+    # Calculate utilization only if all inputs are valid
+    if [ "$speed_valid" -eq 1 ] && [ "$rx_valid" -eq 1 ] && [ "$tx_valid" -eq 1 ]; then
         # Only calculate if we have actual traffic
         if [ "$net_rx_bytes_per_sec" -gt 0 ] || [ "$net_tx_bytes_per_sec" -gt 0 ]; then
         # Convert bytes/sec to Mbps and calculate percentage
@@ -282,6 +303,27 @@ calculate_network_utilization() {
 collect_network_stats
 get_interface_details
 calculate_network_utilization
+
+# Ensure all network variables have valid numeric defaults
+net_rx_bytes=${net_rx_bytes:-0}
+net_tx_bytes=${net_tx_bytes:-0}
+net_rx_packets=${net_rx_packets:-0}
+net_tx_packets=${net_tx_packets:-0}
+net_rx_bytes_per_sec=${net_rx_bytes_per_sec:-0}
+net_tx_bytes_per_sec=${net_tx_bytes_per_sec:-0}
+net_rx_packets_per_sec=${net_rx_packets_per_sec:-0}
+net_tx_packets_per_sec=${net_tx_packets_per_sec:-0}
+net_rx_errors=${net_rx_errors:-0}
+net_tx_errors=${net_tx_errors:-0}
+net_rx_dropped=${net_rx_dropped:-0}
+net_tx_dropped=${net_tx_dropped:-0}
+net_rx_utilization=${net_rx_utilization:-0}
+net_tx_utilization=${net_tx_utilization:-0}
+net_total_utilization=${net_total_utilization:-0}
+total_interface_speed=${total_interface_speed:-0}
+active_interfaces=${active_interfaces:-0}
+time_interval=${time_interval:-0}
+interface_details=${interface_details:-""}
 
 # System information
 hostname=$(hostname 2>/dev/null || cat /proc/sys/kernel/hostname 2>/dev/null || echo "unknown")
