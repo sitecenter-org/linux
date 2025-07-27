@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-15-18
+# Version: 2025-07-26-15-22
 
 set -e
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# Version: 2025-07-26-15-22
 set -e
 
 ACCOUNT_CODE="$1"
@@ -16,6 +16,11 @@ SCRIPT_PATH="/usr/local/bin/sitecenter-heartbeat.sh"
 # Create the heartbeat script
 cat <<EOF > "$SCRIPT_PATH"
 #!/bin/bash
+# Random sending delay to prevent API load spikes
+sending_delay=$((RANDOM % 21))  # 0-20 seconds
+#echo "Delaying ${sending_delay} seconds to distribute API calls..." >&2
+sleep $sending_delay
+
 curl -s -X POST "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/heartbeat/${MONITOR_CODE}/alive?aliveCode=${ALIVE_CODE}" -H "Content-Type: application/json" > /dev/null
 EOF
 
