@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-16-38
+# Version: 2025-07-26-16-54
 
 set -e
 # Source environment variables
@@ -129,12 +129,12 @@ collect_network_stats() {
         fi
     done < /proc/net/dev
 
-    # Initialize rate variables
-    local net_rx_bytes_per_sec=0
-    local net_tx_bytes_per_sec=0
-    local net_rx_packets_per_sec=0
-    local net_tx_packets_per_sec=0
-    local time_interval=0
+    # Initialize rate variables - DECLARE AS GLOBAL
+    net_rx_bytes_per_sec=0
+    net_tx_bytes_per_sec=0
+    net_rx_packets_per_sec=0
+    net_tx_packets_per_sec=0
+    time_interval=0
 
     # Try to read previous stats for rate calculation
     if [ -f "$NET_STATS_FILE" ]; then
@@ -178,7 +178,7 @@ collect_network_stats() {
                         tx_packet_diff=0
                     fi
 
-                    # Calculate per-second rates
+                    # Calculate per-second rates - SET GLOBAL VARIABLES
                     net_rx_bytes_per_sec=$((rx_byte_diff / time_interval))
                     net_tx_bytes_per_sec=$((tx_byte_diff / time_interval))
                     net_rx_packets_per_sec=$((rx_packet_diff / time_interval))
@@ -194,7 +194,7 @@ collect_network_stats() {
     # Store current stats for next run
     echo "$current_time $current_rx_bytes $current_tx_bytes $current_rx_packets $current_tx_packets" > "$NET_STATS_FILE"
 
-    # Export variables for JSON
+    # Set global variables for JSON - NO NEED TO EXPORT
     net_rx_bytes=$current_rx_bytes
     net_tx_bytes=$current_tx_bytes
     net_rx_packets=$current_rx_packets
