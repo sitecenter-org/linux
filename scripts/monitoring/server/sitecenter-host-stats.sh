@@ -225,6 +225,11 @@ json_payload=$(cat <<EOF
 EOF
 )
 
+# Random sending delay to prevent API load spikes
+sending_delay=$((RANDOM % 41))  # 0-40 seconds
+#echo "Delaying ${sending_delay} seconds to distribute API calls..." >&2
+sleep $sending_delay
+
 # Send metrics via curl
 curl -s -X POST \
   "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats" \
