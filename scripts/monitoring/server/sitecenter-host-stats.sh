@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-16-20
+# Version: 2025-07-26-16-38
 
 set -e
 # Source environment variables
@@ -155,18 +155,37 @@ collect_network_stats() {
             if [ "$prev_time" -gt 0 ] && [ "$current_time" -gt "$prev_time" ]; then
             time_interval=$((current_time - prev_time))
 
-            # Calculate rates (only if time interval is reasonable: 30 seconds to 10 minutes)
-            if [ "$time_interval" -gt 30 ] && [ "$time_interval" -lt 600 ]; then
-                net_rx_bytes_per_sec=$(( (current_rx_bytes - prev_rx_bytes) / time_interval ))
-                net_tx_bytes_per_sec=$(( (current_tx_bytes - prev_tx_bytes) / time_interval ))
-                net_rx_packets_per_sec=$(( (current_rx_packets - prev_rx_packets) / time_interval ))
-                net_tx_packets_per_sec=$(( (current_tx_packets - prev_tx_packets) / time_interval ))
+                # Calculate rates (allow reasonable time intervals: 10 seconds to 20 minutes)
+                # This covers cron runs from 1 minute to 15 minutes with some buffer
+                if [ "$time_interval" -ge 10 ] && [ "$time_interval" -le 1200 ]; then
+                    # Calculate byte and packet differences
+                    local rx_byte_diff=$((current_rx_bytes - prev_rx_bytes))
+                    local tx_byte_diff=$((current_tx_bytes - prev_tx_bytes))
+                    local rx_packet_diff=$((current_rx_packets - prev_rx_packets))
+                    local tx_packet_diff=$((current_tx_packets - prev_tx_packets))
 
-                # Ensure rates are not negative (counter resets)
-                [ "$net_rx_bytes_per_sec" -lt 0 ] && net_rx_bytes_per_sec=0
-                [ "$net_tx_bytes_per_sec" -lt 0 ] && net_tx_bytes_per_sec=0
-                [ "$net_rx_packets_per_sec" -lt 0 ] && net_rx_packets_per_sec=0
-                [ "$net_tx_packets_per_sec" -lt 0 ] && net_tx_packets_per_sec=0
+                    # Handle counter resets (negative differences)
+                    if [ "$rx_byte_diff" -lt 0 ]; then
+                        rx_byte_diff=0
+                    fi
+                    if [ "$tx_byte_diff" -lt 0 ]; then
+                        tx_byte_diff=0
+                    fi
+                    if [ "$rx_packet_diff" -lt 0 ]; then
+                        rx_packet_diff=0
+                    fi
+                    if [ "$tx_packet_diff" -lt 0 ]; then
+                        tx_packet_diff=0
+                    fi
+
+                    # Calculate per-second rates
+                    net_rx_bytes_per_sec=$((rx_byte_diff / time_interval))
+                    net_tx_bytes_per_sec=$((tx_byte_diff / time_interval))
+                    net_rx_packets_per_sec=$((rx_packet_diff / time_interval))
+                    net_tx_packets_per_sec=$((tx_packet_diff / time_interval))
+                else
+                    # Time interval is outside reasonable bounds, reset to 0
+                    time_interval=0
             fi
         fi
     fi
@@ -210,17 +229,23 @@ get_interface_details() {
         if [ "$operstate" = "up" ]; then
             # Get interface speed (in Mbps)
             local speed=0
+            local speed_display="unknown"
+
             if [ -f "$iface_path/speed" ]; then
                 local speed_raw=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
                 # Validate speed is numeric and handle negative speeds (unknown)
                 if [[ "$speed_raw" =~ ^-?[0-9]+$ ]]; then
                     if [ "$speed_raw" -gt 0 ]; then
                         speed=$speed_raw
+                        speed_display="${speed}Mbps"
+                    elif [ "$speed_raw" -eq -1 ]; then
+                        # -1 typically means unknown speed in virtual environments
+                        speed_display="virtual"
                     fi
                 fi
             fi
 
-            # Get interface statistics
+            # Get interface statistics to verify it's actually active
             local rx_bytes=0 tx_bytes=0
             if [ -f "$iface_path/statistics/rx_bytes" ]; then
                 local rx_raw=$(cat "$iface_path/statistics/rx_bytes" 2>/dev/null || echo "0")
@@ -235,17 +260,32 @@ get_interface_details() {
                 fi
             fi
 
-            # Only count interfaces with valid speed
+            # Count interface as active if:
+            # 1. It has valid speed > 0, OR
+            # 2. It's up and has network activity (for virtual interfaces)
+            local is_active=0
             if [ "$speed" -gt 0 ]; then
+                # Physical interface with known speed
                 total_interface_speed=$((total_interface_speed + speed))
-                active_interfaces=$((active_interfaces + 1))
+                is_active=1
+            elif [ "$rx_bytes" -gt 0 ] || [ "$tx_bytes" -gt 0 ]; then
+                # Virtual interface with traffic - assume 1000Mbps for calculation
+                total_interface_speed=$((total_interface_speed + 1000))
+                is_active=1
+                if [ "$speed_display" = "unknown" ]; then
+                    speed_display="virtual/1000Mbps"
+                fi
             fi
+
+            if [ "$is_active" -eq 1 ]; then
+                active_interfaces=$((active_interfaces + 1))
 
             # Add to interface details
             if [ -n "$interface_details" ]; then
                 interface_details="${interface_details},"
             fi
-            interface_details="${interface_details}${iface}:${speed}Mbps"
+                interface_details="${interface_details}${iface}:${speed_display}"
+            fi
         fi
     done
 
