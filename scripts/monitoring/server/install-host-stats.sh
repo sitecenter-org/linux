@@ -2,7 +2,7 @@
 # SiteCenter Host Monitoring Installer
 # Note: Run with the same user privileges that will execute the cron job
 # (typically 'sudo' for system-wide monitoring)
-# Version: 2025-07-26-16-00
+# Version: 2025-07-26-17-32
 set -e
 
 ACCOUNT_CODE="$1"
@@ -50,16 +50,12 @@ if [ "$EUID" -eq 0 ]; then
     chown root:root "$LOCAL_ENV_PATH"
 fi
 
-echo "Environment file created with secure permissions."
-
 # Download the monitoring script
 echo "Downloading monitoring script to $LOCAL_SCRIPT_PATH..."
 
 curl -sL -o "$LOCAL_SCRIPT_PATH" "https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/$SCRIPT_NAME"
 
 chmod +x "$LOCAL_SCRIPT_PATH"
-
-echo "Script downloaded and made executable."
 
 # Prepare the cron job line (without parameters - will use environment file)
 CRON_LINE="* * * * * $LOCAL_SCRIPT_PATH"
@@ -77,11 +73,8 @@ rm "$TMP_CRON"
 
 # Verify
 if crontab -l | grep -qF "$LOCAL_SCRIPT_PATH"; then
-  echo "Monitor installed and scheduled every minute via cron."
   echo "Environment variables stored securely in $LOCAL_ENV_PATH"
-  echo "Cron job configured to run without command-line parameters."
   echo ""
-  echo "To update credentials: edit $LOCAL_ENV_PATH"
   echo "To uninstall: crontab -e (remove the line with $LOCAL_SCRIPT_PATH)"
 
   # Test if the monitoring script can access the environment file
