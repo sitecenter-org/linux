@@ -1,4 +1,7 @@
 #!/bin/bash
+# SiteCenter Host Monitoring Installer
+# Note: Run with the same user privileges that will execute the cron job
+# (typically 'sudo' for system-wide monitoring)
 
 set -e
 
@@ -9,6 +12,14 @@ ALIVE_CODE="$3"
 if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$ALIVE_CODE" ]]; then
   echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE ALIVE_CODE"
   exit 1
+fi
+
+# Show current user context for troubleshooting
+echo "Installing as user: $(whoami) (UID: $(id -u))"
+if [ "$EUID" -eq 0 ]; then
+    echo "Running with root privileges - cron jobs will run as root."
+else
+    echo "Running as regular user - cron jobs will run as $(whoami)."
 fi
 
 # Define paths
@@ -30,8 +41,15 @@ export SITECENTER_MONITOR="$MONITOR_CODE"
 export SITECENTER_SECRET="$ALIVE_CODE"
 EOF
 
-# Set appropriate permissions (readable by owner only for security)
-chmod 600 "$LOCAL_ENV_PATH"
+# Set appropriate permissions and ownership
+# Make readable by owner and group (in case cron runs as different user)
+chmod 640 "$LOCAL_ENV_PATH"
+
+# If running as root, ensure the file is owned by root
+if [ "$EUID" -eq 0 ]; then
+    chown root:root "$LOCAL_ENV_PATH"
+fi
+
 echo "Environment file created with secure permissions."
 
 # Download the monitoring script
@@ -62,6 +80,19 @@ if crontab -l | grep -qF "$LOCAL_SCRIPT_PATH"; then
   echo "Monitor installed and scheduled every minute via cron."
   echo "Environment variables stored securely in $LOCAL_ENV_PATH"
   echo "Cron job configured to run without command-line parameters."
+  echo ""
+  echo "To update credentials: edit $LOCAL_ENV_PATH"
+  echo "To uninstall: crontab -e (remove the line with $LOCAL_SCRIPT_PATH)"
+
+  # Test if the monitoring script can access the environment file
+  echo "Testing environment file access..."
+  if [ -r "$LOCAL_ENV_PATH" ] && source "$LOCAL_ENV_PATH" 2>/dev/null; then
+    echo "- Environment file test passed."
+  else
+    echo "! Warning: Environment file may not be accessible to cron."
+    echo "  If monitoring fails, run this installer with the same user privileges as cron."
+    echo "  Typically, run with 'sudo' if cron jobs run as root."
+  fi
 else
   echo "Failed to update crontab."
   exit 1
