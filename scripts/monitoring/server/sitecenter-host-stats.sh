@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-15-51
+# Version: 2025-07-26-16-11
 
 set -e
 # Source environment variables
@@ -17,6 +17,12 @@ if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET_CODE"
   exit 1
 fi
+
+# Temporary file to store previous network stats for rate calculation
+NET_STATS_FILE="/tmp/sitecenter-net-stats-${MONITOR_CODE}.tmp"
+
+# Current timestamp
+current_time=$(date +%s)
 
 # Uptime (seconds)
 uptime_seconds=$(awk '{print int($1)}' /proc/uptime)
@@ -83,9 +89,167 @@ rootfs_used_kb=${rootfs_used_kb%K}
 rootfs_available_kb=${rootfs_available_kb%K}
 rootfs_used_percent=${rootfs_used_percent_raw%\%}
 
-# Network bytes (all interfaces summed)
-net_rx_bytes=$(awk 'NR>2 {sum += $2} END {print sum}' /proc/net/dev)
-net_tx_bytes=$(awk 'NR>2 {sum += $10} END {print sum}' /proc/net/dev)
+# Enhanced Network Statistics Collection
+collect_network_stats() {
+    # Read current network stats
+    local current_rx_bytes=0
+    local current_tx_bytes=0
+    local current_rx_packets=0
+    local current_tx_packets=0
+    local current_rx_errors=0
+    local current_tx_errors=0
+    local current_rx_dropped=0
+    local current_tx_dropped=0
+
+    # Parse /proc/net/dev for all interfaces (excluding loopback)
+    while read -r line; do
+        # Skip header lines and loopback
+        if [[ "$line" =~ ^[[:space:]]*[a-zA-Z0-9]+: ]] && [[ ! "$line" =~ lo: ]]; then
+            # Extract interface name and stats
+            iface=$(echo "$line" | awk -F: '{print $1}' | tr -d ' ')
+            stats=$(echo "$line" | awk -F: '{print $2}')
+
+            # Parse RX stats (bytes, packets, errors, dropped)
+            read rx_bytes rx_packets rx_errs rx_drop _ _ _ _ tx_bytes tx_packets tx_errs tx_drop _ <<< "$stats"
+
+            current_rx_bytes=$((current_rx_bytes + rx_bytes))
+            current_tx_bytes=$((current_tx_bytes + tx_bytes))
+            current_rx_packets=$((current_rx_packets + rx_packets))
+            current_tx_packets=$((current_tx_packets + tx_packets))
+            current_rx_errors=$((current_rx_errors + rx_errs))
+            current_tx_errors=$((current_tx_errors + tx_errs))
+            current_rx_dropped=$((current_rx_dropped + rx_drop))
+            current_tx_dropped=$((current_tx_dropped + tx_drop))
+        fi
+    done < /proc/net/dev
+
+    # Initialize rate variables
+    local net_rx_bytes_per_sec=0
+    local net_tx_bytes_per_sec=0
+    local net_rx_packets_per_sec=0
+    local net_tx_packets_per_sec=0
+    local time_interval=0
+
+    # Try to read previous stats for rate calculation
+    if [ -f "$NET_STATS_FILE" ]; then
+        # Read previous stats
+        local prev_data
+        if prev_data=$(cat "$NET_STATS_FILE" 2>/dev/null); then
+            local prev_time prev_rx_bytes prev_tx_bytes prev_rx_packets prev_tx_packets
+            read prev_time prev_rx_bytes prev_tx_bytes prev_rx_packets prev_tx_packets <<< "$prev_data"
+
+            # Calculate time interval
+            time_interval=$((current_time - prev_time))
+
+            # Calculate rates (only if time interval is reasonable: 30 seconds to 10 minutes)
+            if [ "$time_interval" -gt 30 ] && [ "$time_interval" -lt 600 ]; then
+                net_rx_bytes_per_sec=$(( (current_rx_bytes - prev_rx_bytes) / time_interval ))
+                net_tx_bytes_per_sec=$(( (current_tx_bytes - prev_tx_bytes) / time_interval ))
+                net_rx_packets_per_sec=$(( (current_rx_packets - prev_rx_packets) / time_interval ))
+                net_tx_packets_per_sec=$(( (current_tx_packets - prev_tx_packets) / time_interval ))
+
+                # Ensure rates are not negative (counter resets)
+                [ "$net_rx_bytes_per_sec" -lt 0 ] && net_rx_bytes_per_sec=0
+                [ "$net_tx_bytes_per_sec" -lt 0 ] && net_tx_bytes_per_sec=0
+                [ "$net_rx_packets_per_sec" -lt 0 ] && net_rx_packets_per_sec=0
+                [ "$net_tx_packets_per_sec" -lt 0 ] && net_tx_packets_per_sec=0
+            fi
+        fi
+    fi
+
+    # Store current stats for next run
+    echo "$current_time $current_rx_bytes $current_tx_bytes $current_rx_packets $current_tx_packets" > "$NET_STATS_FILE"
+
+    # Export variables for JSON
+    net_rx_bytes=$current_rx_bytes
+    net_tx_bytes=$current_tx_bytes
+    net_rx_packets=$current_rx_packets
+    net_tx_packets=$current_tx_packets
+    net_rx_errors=$current_rx_errors
+    net_tx_errors=$current_tx_errors
+    net_rx_dropped=$current_rx_dropped
+    net_tx_dropped=$current_tx_dropped
+
+    # Export rate variables
+    export net_rx_bytes_per_sec net_tx_bytes_per_sec net_rx_packets_per_sec net_tx_packets_per_sec time_interval
+}
+
+# Get detailed interface information with speeds
+get_interface_details() {
+    local interface_details=""
+    local total_interface_speed=0
+    local active_interfaces=0
+
+    # Check each network interface
+    for iface_path in /sys/class/net/*; do
+        [ -d "$iface_path" ] || continue
+        local iface=$(basename "$iface_path")
+
+        # Skip loopback and virtual interfaces
+        [[ "$iface" =~ ^(lo|docker|veth|br-) ]] && continue
+
+        # Check if interface is up
+        local operstate=""
+        [ -f "$iface_path/operstate" ] && operstate=$(cat "$iface_path/operstate" 2>/dev/null)
+
+        if [ "$operstate" = "up" ]; then
+            # Get interface speed (in Mbps)
+            local speed=0
+            if [ -f "$iface_path/speed" ]; then
+                speed=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
+                # Convert negative speeds (unknown) to 0
+                [ "$speed" -lt 0 ] && speed=0
+            fi
+
+            # Get interface statistics
+            local rx_bytes=0 tx_bytes=0
+            [ -f "$iface_path/statistics/rx_bytes" ] && rx_bytes=$(cat "$iface_path/statistics/rx_bytes" 2>/dev/null || echo "0")
+            [ -f "$iface_path/statistics/tx_bytes" ] && tx_bytes=$(cat "$iface_path/statistics/tx_bytes" 2>/dev/null || echo "0")
+
+            if [ "$speed" -gt 0 ]; then
+                total_interface_speed=$((total_interface_speed + speed))
+                active_interfaces=$((active_interfaces + 1))
+            fi
+
+            # Add to interface details
+            if [ -n "$interface_details" ]; then
+                interface_details="${interface_details},"
+            fi
+            interface_details="${interface_details}${iface}:${speed}Mbps"
+        fi
+    done
+
+    # Export variables
+    export interface_details total_interface_speed active_interfaces
+}
+
+# Calculate network utilization percentage
+calculate_network_utilization() {
+    local rx_utilization=0
+    local tx_utilization=0
+    local total_utilization=0
+
+    if [ "$total_interface_speed" -gt 0 ] && [ "$net_rx_bytes_per_sec" -gt 0 ]; then
+        # Convert bytes/sec to Mbps and calculate percentage
+        local rx_mbps=$(awk "BEGIN {printf \"%.2f\", ($net_rx_bytes_per_sec * 8) / 1000000}")
+        local tx_mbps=$(awk "BEGIN {printf \"%.2f\", ($net_tx_bytes_per_sec * 8) / 1000000}")
+
+        rx_utilization=$(awk "BEGIN {printf \"%.2f\", ($rx_mbps / $total_interface_speed) * 100}")
+        tx_utilization=$(awk "BEGIN {printf \"%.2f\", ($tx_mbps / $total_interface_speed) * 100}")
+
+        # Total utilization is the higher of RX or TX (duplex consideration)
+        total_utilization=$(awk "BEGIN {printf \"%.2f\", ($rx_utilization > $tx_utilization) ? $rx_utilization : $tx_utilization}")
+    fi
+
+    export net_rx_utilization=$rx_utilization
+    export net_tx_utilization=$tx_utilization
+    export net_total_utilization=$total_utilization
+}
+
+# Call network collection functions
+collect_network_stats
+get_interface_details
+calculate_network_utilization
 
 # System information
 hostname=$(hostname 2>/dev/null || cat /proc/sys/kernel/hostname 2>/dev/null || echo "unknown")
@@ -149,33 +313,6 @@ for service in "https://ipv4.icanhazip.com" "https://api.ipify.org" "https://che
     external_ip="unknown"
 done
 
-# Get interface information
-interface_info=""
-if command -v ip >/dev/null 2>&1; then
-    # Use ip command if available
-    interface_info=$(ip addr show 2>/dev/null | awk '
-    /^[0-9]+:/ { iface = $2; gsub(/:/, "", iface) }
-    /inet / && !/127\.0\.0\.1/ {
-        ip = $2; gsub(/\/.*/, "", ip)
-        if (interface_info) interface_info = interface_info ","
-        interface_info = interface_info iface ":" ip
-    }
-    END { print interface_info }' || echo "")
-elif command -v ifconfig >/dev/null 2>&1; then
-    # Fallback to ifconfig
-    interface_info=$(ifconfig 2>/dev/null | awk '
-    /^[a-zA-Z0-9]+/ { iface = $1 }
-    /inet / && !/127\.0\.0\.1/ {
-        for(i=1;i<=NF;i++) if($i~/addr:/ || (i==2 && $i~/^[0-9]/)) {
-            ip = $i; gsub(/addr:/, "", ip)
-            if (interface_info) interface_info = interface_info ","
-            interface_info = interface_info iface ":" ip
-            break
-        }
-    }
-    END { print interface_info }' || echo "")
-fi
-
 # Escape strings for JSON
 escape_json() {
     echo "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'
@@ -184,9 +321,9 @@ escape_json() {
 local_ips_escaped=$(escape_json "$local_ips")
 primary_ip_escaped=$(escape_json "$primary_ip")
 external_ip_escaped=$(escape_json "$external_ip")
-interface_info_escaped=$(escape_json "$interface_info")
+interface_details_escaped=$(escape_json "$interface_details")
 
-# Prepare JSON payload
+# Prepare JSON payload with enhanced network statistics
 json_payload=$(cat <<EOF
 {
   "uptime_seconds": $uptime_seconds,
@@ -214,6 +351,22 @@ json_payload=$(cat <<EOF
   "rootfs_used_percent": $rootfs_used_percent,
   "net_rx_bytes": $net_rx_bytes,
   "net_tx_bytes": $net_tx_bytes,
+  "net_rx_bytes_per_sec": $net_rx_bytes_per_sec,
+  "net_tx_bytes_per_sec": $net_tx_bytes_per_sec,
+  "net_rx_packets": $net_rx_packets,
+  "net_tx_packets": $net_tx_packets,
+  "net_rx_packets_per_sec": $net_rx_packets_per_sec,
+  "net_tx_packets_per_sec": $net_tx_packets_per_sec,
+  "net_rx_errors": $net_rx_errors,
+  "net_tx_errors": $net_tx_errors,
+  "net_rx_dropped": $net_rx_dropped,
+  "net_tx_dropped": $net_tx_dropped,
+  "net_rx_utilization": $net_rx_utilization,
+  "net_tx_utilization": $net_tx_utilization,
+  "net_total_utilization": $net_total_utilization,
+  "net_interface_speed_mbps": $total_interface_speed,
+  "net_active_interfaces": $active_interfaces,
+  "net_interval_seconds": $time_interval,
   "hostname": "$hostname",
   "kernel_version": "$kernel_version",
   "os_name": "$os_name",
@@ -224,7 +377,7 @@ json_payload=$(cat <<EOF
   "local_ips": "$local_ips_escaped",
   "primary_ip": "$primary_ip_escaped",
   "external_ip": "$external_ip_escaped",
-  "interface_info": "$interface_info_escaped"
+  "interface_info": "$interface_details_escaped"
 }
 EOF
 )
