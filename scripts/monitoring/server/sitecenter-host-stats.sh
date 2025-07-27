@@ -1,13 +1,17 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-15-22
+# Version: 2025-07-26-15-51
 
 set -e
+# Source environment variables
+if [ -f /usr/local/bin/sitecenter-host-env.sh ]; then
+    . /usr/local/bin/sitecenter-host-env.sh
+fi
 
-ACCOUNT_CODE="$1"
-MONITOR_CODE="$2"
-SECRET_CODE="$3"
+ACCOUNT_CODE="${1:-$SITECENTER_ACCOUNT}"
+MONITOR_CODE="${2:-$SITECENTER_MONITOR}"
+SECRET_CODE="${3:-$SITECENTER_SECRET}"
 
 if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET_CODE"
