@@ -7,10 +7,10 @@ set -e
 
 ACCOUNT_CODE="$1"
 MONITOR_CODE="$2"
-ALIVE_CODE="$3"
+SECRET="$3"
 
-if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$ALIVE_CODE" ]]; then
-  echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE ALIVE_CODE"
+if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET" ]]; then
+  echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET"
   exit 1
 fi
 
@@ -38,7 +38,7 @@ cat > "$LOCAL_ENV_PATH" << EOF
 
 export SITECENTER_ACCOUNT="$ACCOUNT_CODE"
 export SITECENTER_MONITOR="$MONITOR_CODE"
-export SITECENTER_SECRET="$ALIVE_CODE"
+export SITECENTER_SECRET="$SECRET"
 EOF
 
 # Set appropriate permissions and ownership
