@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-07-26-18-03-FIXED
+# Version: 2025-08-21-NETWORK-FIXED
 
 set -e
 # Source environment variables
@@ -133,7 +133,7 @@ rootfs_used_percent=${rootfs_used_percent_raw%\%}
     [[ "$rootfs_used_percent" =~ ^[0-9]+$ ]] || rootfs_used_percent=0
 fi
 
-# Enhanced Network Statistics Collection - FIXED VERSION
+# Enhanced Network Statistics Collection
 collect_network_stats() {
     # Initialize all variables with safe defaults
     local current_rx_bytes=0 current_tx_bytes=0
@@ -270,79 +270,65 @@ collect_network_stats() {
     net_tx_dropped=$current_tx_dropped
 }
 
-# Get detailed interface information with speeds - SIMPLIFIED AND SAFER
-get_interface_details() {
-    interface_details=""
+# Call network collection function
+collect_network_stats
+
+# Network interface detection and speed calculation
     total_interface_speed=0
     active_interfaces=0
+interface_details=""
 
-    # Check each network interface safely
     if [ -d /sys/class/net ]; then
     for iface_path in /sys/class/net/*; do
         [ -d "$iface_path" ] || continue
-        local iface=$(basename "$iface_path")
+        iface=$(basename "$iface_path")
 
-        # Skip loopback and virtual interfaces
+        # Skip excluded interfaces
         [[ "$iface" =~ ^(lo|docker|veth|br-) ]] && continue
 
         # Check if interface is up
-            local operstate="down"
-            if [ -f "$iface_path/operstate" ] && [ -r "$iface_path/operstate" ]; then
                 operstate=$(cat "$iface_path/operstate" 2>/dev/null || echo "down")
-            fi
-
         if [ "$operstate" = "up" ]; then
-                # Get interface speed safely
-            local speed=0
-            local speed_display="unknown"
-
-                if [ -f "$iface_path/speed" ] && [ -r "$iface_path/speed" ]; then
-                local speed_raw=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
+            # Get interface speed
+            speed_raw=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
                     if [[ "$speed_raw" =~ ^[0-9]+$ ]] && [ "$speed_raw" -gt 0 ]; then
-                        speed=$speed_raw
-                        speed_display="${speed}Mbps"
-                total_interface_speed=$((total_interface_speed + speed))
+                # Valid speed detected
+                total_interface_speed=$((total_interface_speed + speed_raw))
                         active_interfaces=$((active_interfaces + 1))
+                [ -n "$interface_details" ] && interface_details="${interface_details},"
+                interface_details="${interface_details}${iface}:${speed_raw}Mbps"
                     elif [ "$speed_raw" = "-1" ]; then
-                        # Virtual interface
-                        speed_display="virtual"
+                # Virtual interface with unlimited speed
                         total_interface_speed=$((total_interface_speed + 1000))
                         active_interfaces=$((active_interfaces + 1))
-                    fi
+                [ -n "$interface_details" ] && interface_details="${interface_details},"
+                interface_details="${interface_details}${iface}:virtual"
                 else
-                    # Assume virtual interface if speed file doesn't exist
-                    speed_display="virtual"
+                # Bridge or interface without speed file - assume 1000Mbps
                 total_interface_speed=$((total_interface_speed + 1000))
                 active_interfaces=$((active_interfaces + 1))
-                fi
-
-                # Add to interface details safely
-            if [ -n "$interface_details" ]; then
-                    interface_details="${interface_details},${iface}:${speed_display}"
-                else
-                    interface_details="${iface}:${speed_display}"
+                [ -n "$interface_details" ] && interface_details="${interface_details},"
+                interface_details="${interface_details}${iface}:assumed"
             fi
         fi
     done
     fi
-}
 
-# Calculate network utilization percentage - SAFER VERSION
-calculate_network_utilization() {
+# Calculate network utilization
     net_rx_utilization="0.00"
     net_tx_utilization="0.00"
     net_total_utilization="0.00"
 
-    # Only calculate if we have valid data
     if [ "$total_interface_speed" -gt 0 ] &&
        [[ "$net_rx_bytes_per_sec" =~ ^[0-9]+$ ]] &&
        [[ "$net_tx_bytes_per_sec" =~ ^[0-9]+$ ]]; then
 
         if [ "$net_rx_bytes_per_sec" -gt 0 ] || [ "$net_tx_bytes_per_sec" -gt 0 ]; then
-            # Use awk for safe floating point calculation
-            local rx_mbps=$(awk -v bytes="$net_rx_bytes_per_sec" 'BEGIN {printf "%.2f", (bytes * 8) / 1000000}' 2>/dev/null || echo "0.00")
-            local tx_mbps=$(awk -v bytes="$net_tx_bytes_per_sec" 'BEGIN {printf "%.2f", (bytes * 8) / 1000000}' 2>/dev/null || echo "0.00")
+        # Convert bytes/sec to Mbps (bytes * 8 / 1,000,000)
+        rx_mbps=$(awk -v bytes="$net_rx_bytes_per_sec" 'BEGIN {printf "%.6f", (bytes * 8) / 1000000}' 2>/dev/null || echo "0.000000")
+        tx_mbps=$(awk -v bytes="$net_tx_bytes_per_sec" 'BEGIN {printf "%.6f", (bytes * 8) / 1000000}' 2>/dev/null || echo "0.000000")
 
+        # Calculate utilization percentages
             net_rx_utilization=$(awk -v rx="$rx_mbps" -v speed="$total_interface_speed" 'BEGIN {
                 if (speed > 0) printf "%.2f", (rx / speed) * 100; else print "0.00"
             }' 2>/dev/null || echo "0.00")
@@ -357,12 +343,6 @@ calculate_network_utilization() {
             }' 2>/dev/null || echo "0.00")
     fi
     fi
-}
-
-# Call network collection functions
-collect_network_stats
-get_interface_details
-calculate_network_utilization
 
 # Ensure all network variables have valid defaults
 net_rx_bytes=${net_rx_bytes:-0}
