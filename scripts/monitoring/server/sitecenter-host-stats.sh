@@ -273,7 +273,7 @@ collect_network_stats() {
 # Call network collection function
 collect_network_stats
 
-# Network interface detection and speed calculation
+# Network interface detection and speed calculation - PHYSICAL INTERFACES ONLY
     total_interface_speed=0
     active_interfaces=0
 interface_details=""
@@ -283,8 +283,11 @@ interface_details=""
         [ -d "$iface_path" ] || continue
         iface=$(basename "$iface_path")
 
-        # Skip excluded interfaces
-        [[ "$iface" =~ ^(lo|docker|veth|br-) ]] && continue
+        # Skip loopback, virtual, and bridge interfaces
+        [[ "$iface" =~ ^(lo|docker|veth|br-|tap|fwbr|fwln|fwpr|vmb) ]] && continue
+
+        # Only process physical ethernet interfaces (enp, eth, eno, ens, etc.)
+        [[ "$iface" =~ ^(enp|eth|eno|ens|em|p[0-9]+p) ]] || continue
 
         # Check if interface is up
                 operstate=$(cat "$iface_path/operstate" 2>/dev/null || echo "down")
@@ -292,23 +295,11 @@ interface_details=""
             # Get interface speed
             speed_raw=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
                     if [[ "$speed_raw" =~ ^[0-9]+$ ]] && [ "$speed_raw" -gt 0 ]; then
-                # Valid speed detected
+                # Valid physical interface speed detected
                 total_interface_speed=$((total_interface_speed + speed_raw))
                         active_interfaces=$((active_interfaces + 1))
                 [ -n "$interface_details" ] && interface_details="${interface_details},"
                 interface_details="${interface_details}${iface}:${speed_raw}Mbps"
-                    elif [ "$speed_raw" = "-1" ]; then
-                # Virtual interface with unlimited speed
-                        total_interface_speed=$((total_interface_speed + 1000))
-                        active_interfaces=$((active_interfaces + 1))
-                [ -n "$interface_details" ] && interface_details="${interface_details},"
-                interface_details="${interface_details}${iface}:virtual"
-                else
-                # Bridge or interface without speed file - assume 1000Mbps
-                total_interface_speed=$((total_interface_speed + 1000))
-                active_interfaces=$((active_interfaces + 1))
-                [ -n "$interface_details" ] && interface_details="${interface_details},"
-                interface_details="${interface_details}${iface}:assumed"
             fi
         fi
     done
