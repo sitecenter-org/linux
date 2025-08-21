@@ -1,43 +1,12 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-08-21-FIXED-RESOURCE-SAFE
+# Version: 2025-07-26-18-03-FIXED
 
 set -e
-
-# Set strict resource limits to prevent system overload
-ulimit -n 256        # Limit file descriptors
-ulimit -v 204800     # Limit virtual memory to 200MB
-ulimit -t 30         # CPU time limit to 30 seconds
-ulimit -u 50         # Limit number of processes
-
-# Exit immediately if system is under memory pressure
-check_system_resources() {
-    local available_mem
-    if [ -r /proc/meminfo ]; then
-        available_mem=$(awk '/MemAvailable/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo "0")
-        if [ "$available_mem" -lt 51200 ]; then  # Less than 50MB available
-            echo "System under memory pressure (${available_mem}KB available), skipping collection" >&2
-            exit 1
-        fi
-    fi
-
-    # Check if another instance is running
-    local script_name=$(basename "$0")
-    local running_instances=$(pgrep -f "$script_name" | wc -l)
-    if [ "$running_instances" -gt 2 ]; then  # Current + one other
-        echo "Another instance already running, exiting" >&2
-        exit 1
-    fi
-}
-
-check_system_resources
-
-# Source environment variables safely
+# Source environment variables
 if [ -f /usr/local/bin/sitecenter-host-env.sh ]; then
-    set +e
-    source /usr/local/bin/sitecenter-host-env.sh 2>/dev/null
-    set -e
+    source /usr/local/bin/sitecenter-host-env.sh 2>/dev/null || true
 fi
 
 ACCOUNT_CODE="${1:-$SITECENTER_ACCOUNT}"
@@ -49,254 +18,233 @@ if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   exit 1
 fi
 
-# Temporary file with proper cleanup
+# Temporary file to store previous network stats for rate calculation
 NET_STATS_FILE="/tmp/sitecenter-net-stats-${MONITOR_CODE}.tmp"
-TEMP_FILES=("$NET_STATS_FILE")
 
-# Cleanup function
-cleanup() {
-    local exit_code=$?
-    for file in "${TEMP_FILES[@]}"; do
-        [ -f "$file" ] && rm -f "$file" 2>/dev/null || true
-    done
-    exit $exit_code
-}
-trap cleanup EXIT INT TERM
-
-# Get current timestamp once
+# Current timestamp
 current_time=$(date +%s)
+
+# Capture the exact collection timestamp in UTC (ISO 8601 format for Java)
 collection_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Initialize all variables with safe defaults
+# Uptime (seconds) - with error handling
 uptime_seconds=0
-load1=0 load5=0 load15=0 load_per_core="0.00"
-running_processes="0/0" total_processes=0 process_count=0
-mem_total_kb=0 mem_free_kb=0 mem_available_kb=0 mem_used_kb=0 mem_usage_percent="0.00"
-mem_buffers_kb=0 mem_cached_kb=0 swap_total_kb=0 swap_free_kb=0
-cpu_user_ticks=0 cpu_system_ticks=0 cpu_idle_ticks=0 cpu_iowait_ticks=0 cpu_cores=1
-rootfs_total_kb=0 rootfs_used_kb=0 rootfs_available_kb=0 rootfs_used_percent=0
-net_rx_bytes=0 net_tx_bytes=0 net_rx_packets=0 net_tx_packets=0
-net_rx_bytes_per_sec=0 net_tx_bytes_per_sec=0 net_rx_packets_per_sec=0 net_tx_packets_per_sec=0
-net_rx_errors=0 net_tx_errors=0 net_rx_dropped=0 net_tx_dropped=0
-net_rx_utilization="0.00" net_tx_utilization="0.00" net_total_utilization="0.00"
-total_interface_speed=0 active_interfaces=0 time_interval=0
-open_files=0 tcp_connections=0
-hostname="unknown" kernel_version="unknown" os_name="unknown" os_version="unknown"
-local_ips="" primary_ip="" external_ip="unknown" interface_details=""
-
-# Safe numeric validation function
-is_numeric() {
-    [[ "$1" =~ ^[0-9]+$ ]]
-}
-
-is_float() {
-    [[ "$1" =~ ^[0-9]+\.?[0-9]*$ ]]
-}
-
-# Collect system information in batches to reduce syscalls
-collect_basic_stats() {
-    # Uptime
 if [ -r /proc/uptime ]; then
     uptime_seconds=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo "0")
 fi
 
-    # Load averages and process info in one read
+# Load averages and process info - with validation
+load1=0 load5=0 load15=0 running_processes="0/0" total_processes=0
 if [ -r /proc/loadavg ]; then
-        local loadavg_line
-        loadavg_line=$(cat /proc/loadavg 2>/dev/null || echo "0 0 0 0/0 0")
-        local loadavg_array=($loadavg_line)
-        if [ ${#loadavg_array[@]} -ge 5 ]; then
-            is_float "${loadavg_array[0]}" && load1="${loadavg_array[0]}"
-            is_float "${loadavg_array[1]}" && load5="${loadavg_array[1]}"
-            is_float "${loadavg_array[2]}" && load15="${loadavg_array[2]}"
-            running_processes="${loadavg_array[3]:-0/0}"
-            is_numeric "${loadavg_array[4]}" && total_processes="${loadavg_array[4]}"
-        fi
-    fi
-
-    # CPU cores
-    if [ -r /proc/cpuinfo ]; then
-        cpu_cores=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")
-        [ "$cpu_cores" -eq 0 ] && cpu_cores=1
+    {
+        read load1 load5 load15 running_processes total_processes _
+    } < /proc/loadavg 2>/dev/null || {
+        load1=0 load5=0 load15=0 running_processes="0/0" total_processes=0
+    }
 fi
 
-    # Calculate load per core
-    if [ "$cpu_cores" -gt 0 ] && is_float "$load1"; then
-        load_per_core=$(awk -v load="$load1" -v cores="$cpu_cores" 'BEGIN {printf "%.2f", load / cores}' 2>/dev/null || echo "0.00")
-    fi
-}
-
-# Memory information - single read
-collect_memory_stats() {
+# Memory info
+declare -A meminfo
 if [ -r /proc/meminfo ]; then
-        local meminfo_content
-        meminfo_content=$(cat /proc/meminfo 2>/dev/null || echo "")
+    while IFS=': ' read -r key value unit; do
+        if [[ -n "$key" && "$value" =~ ^[0-9]+$ ]]; then
+            meminfo["$key"]="$value"
+        fi
+    done < /proc/meminfo 2>/dev/null
+fi
 
-        mem_total_kb=$(echo "$meminfo_content" | awk '/^MemTotal:/ {print int($2)}' || echo "0")
-        mem_free_kb=$(echo "$meminfo_content" | awk '/^MemFree:/ {print int($2)}' || echo "0")
-        mem_available_kb=$(echo "$meminfo_content" | awk '/^MemAvailable:/ {print int($2)}' || echo "$mem_free_kb")
-        mem_buffers_kb=$(echo "$meminfo_content" | awk '/^Buffers:/ {print int($2)}' || echo "0")
-        mem_cached_kb=$(echo "$meminfo_content" | awk '/^Cached:/ {print int($2)}' || echo "0")
-        swap_total_kb=$(echo "$meminfo_content" | awk '/^SwapTotal:/ {print int($2)}' || echo "0")
-        swap_free_kb=$(echo "$meminfo_content" | awk '/^SwapFree:/ {print int($2)}' || echo "0")
+# Set defaults for memory values
+mem_total_kb=${meminfo[MemTotal]:-0}
+mem_free_kb=${meminfo[MemFree]:-0}
+mem_available_kb=${meminfo[MemAvailable]:-$mem_free_kb}
+mem_buffers_kb=${meminfo[Buffers]:-0}
+mem_cached_kb=${meminfo[Cached]:-0}
+swap_total_kb=${meminfo[SwapTotal]:-0}
+swap_free_kb=${meminfo[SwapFree]:-0}
 
 # Calculate used memory safely
+mem_used_kb=0
 if [ "$mem_total_kb" -gt 0 ] && [ "$mem_available_kb" -ge 0 ]; then
 mem_used_kb=$((mem_total_kb - mem_available_kb))
-            [ "$mem_used_kb" -lt 0 ] && mem_used_kb=0
+if [ "$mem_used_kb" -lt 0 ]; then
+    mem_used_kb=0
+fi
+fi
 
-            # Calculate percentage
-            if [ "$mem_used_kb" -ge 0 ]; then
+# Calculate memory percentage safely
+mem_usage_percent="0.00"
+if [ "$mem_total_kb" -gt 0 ] && [ "$mem_used_kb" -ge 0 ]; then
     mem_usage_percent=$(awk -v used="$mem_used_kb" -v total="$mem_total_kb" 'BEGIN {
         if (total > 0) {
             result = (used / total) * 100
-                        printf "%.2f", (result >= 0 && result <= 100) ? result : 0.00
+            if (result >= 0 && result <= 100) {
+                printf "%.2f", result
+        } else {
+                print "0.00"
+            }
         } else {
             print "0.00"
         }
     }' 2>/dev/null || echo "0.00")
 fi
-        fi
-    fi
-}
 
-# CPU statistics - single read
-collect_cpu_stats() {
+# CPU ticks - safer parsing
+cpu_user_ticks=0 cpu_system_ticks=0 cpu_idle_ticks=0 cpu_iowait_ticks=0
 if [ -r /proc/stat ]; then
-        local cpu_line
-        cpu_line=$(head -n1 /proc/stat 2>/dev/null || echo "cpu 0 0 0 0 0")
-        local cpu_array=($cpu_line)
-
-        if [ ${#cpu_array[@]} -ge 6 ]; then
-            local user="${cpu_array[1]:-0}"
-            local nice="${cpu_array[2]:-0}"
-            local system="${cpu_array[3]:-0}"
-            local idle="${cpu_array[4]:-0}"
-            local iowait="${cpu_array[5]:-0}"
-
-            is_numeric "$user" && is_numeric "$nice" && cpu_user_ticks=$((user + nice))
-            is_numeric "$system" && cpu_system_ticks="$system"
-            is_numeric "$idle" && cpu_idle_ticks="$idle"
-            is_numeric "$iowait" && cpu_iowait_ticks="$iowait"
+    {
+        read cpu user nice system idle iowait _
+        if [[ "$user" =~ ^[0-9]+$ ]] && [[ "$nice" =~ ^[0-9]+$ ]]; then
+cpu_user_ticks=$((user + nice))
+        fi
+        if [[ "$system" =~ ^[0-9]+$ ]]; then
+cpu_system_ticks=$system
+        fi
+        if [[ "$idle" =~ ^[0-9]+$ ]]; then
+cpu_idle_ticks=$idle
+        fi
+        if [[ "$iowait" =~ ^[0-9]+$ ]]; then
+cpu_iowait_ticks=$iowait
+        fi
+    } < /proc/stat 2>/dev/null
 fi
-    fi
-}
 
-# Filesystem usage - single call
-collect_filesystem_stats() {
+# CPU core count
+cpu_cores=1
+if [ -r /proc/cpuinfo ]; then
+cpu_cores=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "1")
+fi
+
+# Filesystem usage (root) - safer parsing
+rootfs_total_kb=0 rootfs_used_kb=0 rootfs_available_kb=0 rootfs_used_percent=0
 if command -v df >/dev/null 2>&1; then
-        local df_output
     df_output=$(df -BK / 2>/dev/null | awk 'NR==2 {print $2, $3, $4, $5}' || echo "0K 0K 0K 0%")
-        local df_array=($df_output)
+    read rootfs_total_raw rootfs_used_raw rootfs_available_raw rootfs_used_percent_raw <<< "$df_output"
 
-        if [ ${#df_array[@]} -eq 4 ]; then
-            rootfs_total_kb=${df_array[0]%K}
-            rootfs_used_kb=${df_array[1]%K}
-            rootfs_available_kb=${df_array[2]%K}
-            rootfs_used_percent=${df_array[3]%\%}
+    # Remove 'K' suffix and validate
+    rootfs_total_kb=${rootfs_total_raw%K}
+    rootfs_used_kb=${rootfs_used_raw%K}
+    rootfs_available_kb=${rootfs_available_raw%K}
+rootfs_used_percent=${rootfs_used_percent_raw%\%}
 
-            is_numeric "$rootfs_total_kb" || rootfs_total_kb=0
-            is_numeric "$rootfs_used_kb" || rootfs_used_kb=0
-            is_numeric "$rootfs_available_kb" || rootfs_available_kb=0
-            is_numeric "$rootfs_used_percent" || rootfs_used_percent=0
+    # Validate numbers
+    [[ "$rootfs_total_kb" =~ ^[0-9]+$ ]] || rootfs_total_kb=0
+    [[ "$rootfs_used_kb" =~ ^[0-9]+$ ]] || rootfs_used_kb=0
+    [[ "$rootfs_available_kb" =~ ^[0-9]+$ ]] || rootfs_available_kb=0
+    [[ "$rootfs_used_percent" =~ ^[0-9]+$ ]] || rootfs_used_percent=0
 fi
-    fi
-}
 
-# Network statistics - optimized version
+# Enhanced Network Statistics Collection - FIXED VERSION
 collect_network_stats() {
+    # Initialize all variables with safe defaults
     local current_rx_bytes=0 current_tx_bytes=0
     local current_rx_packets=0 current_tx_packets=0
     local current_rx_errors=0 current_tx_errors=0
     local current_rx_dropped=0 current_tx_dropped=0
 
-    # Read network stats in one operation
+    # Safely parse /proc/net/dev
     if [ -r /proc/net/dev ]; then
-        local net_content
-        net_content=$(cat /proc/net/dev 2>/dev/null || echo "")
+        while IFS= read -r line; do
+            # Skip header lines and validate line format
+            if [[ "$line" =~ ^[[:space:]]*([a-zA-Z0-9]+):[[:space:]]*(.+)$ ]]; then
+                local iface="${BASH_REMATCH[1]}"
+                local stats_line="${BASH_REMATCH[2]}"
 
-        # Process all interfaces at once using awk
-        local net_totals
-        net_totals=$(echo "$net_content" | awk '
-        NR > 2 && /^[[:space:]]*[a-zA-Z0-9]+:/ {
-            gsub(/^[[:space:]]*/, "")
-            if ($0 ~ /^lo:/) next  # Skip loopback
+                # Skip loopback interface
+                [[ "$iface" == "lo" ]] && continue
 
-            split($0, parts, ":")
-            if (length(parts) < 2) next
+                # Parse stats with safer method - use array
+                local stats_array=($stats_line)
 
-            n = split(parts[2], fields)
-            if (n >= 16) {
-                rx_bytes += int(fields[1])
-                rx_packets += int(fields[2])
-                rx_errors += int(fields[3])
-                rx_dropped += int(fields[4])
-                tx_bytes += int(fields[9])
-                tx_packets += int(fields[10])
-                tx_errors += int(fields[11])
-                tx_dropped += int(fields[12])
-            }
-        }
-        END {
-            printf "%d %d %d %d %d %d %d %d",
-                   rx_bytes, rx_packets, rx_errors, rx_dropped,
-                   tx_bytes, tx_packets, tx_errors, tx_dropped
-        }' 2>/dev/null || echo "0 0 0 0 0 0 0 0")
+                # Validate we have enough fields (at least 16)
+                if [ ${#stats_array[@]} -ge 16 ]; then
+                    # RX: bytes, packets, errs, drop (positions 0, 1, 2, 3)
+                    local rx_bytes="${stats_array[0]:-0}"
+                    local rx_packets="${stats_array[1]:-0}"
+                    local rx_errs="${stats_array[2]:-0}"
+                    local rx_drop="${stats_array[3]:-0}"
 
-        local totals_array=($net_totals)
-        if [ ${#totals_array[@]} -eq 8 ]; then
-            current_rx_bytes="${totals_array[0]}"
-            current_rx_packets="${totals_array[1]}"
-            current_rx_errors="${totals_array[2]}"
-            current_rx_dropped="${totals_array[3]}"
-            current_tx_bytes="${totals_array[4]}"
-            current_tx_packets="${totals_array[5]}"
-            current_tx_errors="${totals_array[6]}"
-            current_tx_dropped="${totals_array[7]}"
+                    # TX: bytes, packets, errs, drop (positions 8, 9, 10, 11)
+                    local tx_bytes="${stats_array[8]:-0}"
+                    local tx_packets="${stats_array[9]:-0}"
+                    local tx_errs="${stats_array[10]:-0}"
+                    local tx_drop="${stats_array[11]:-0}"
+
+                    # Validate all values are numeric before adding
+                    if [[ "$rx_bytes" =~ ^[0-9]+$ ]]; then
+            current_rx_bytes=$((current_rx_bytes + rx_bytes))
                     fi
+                    if [[ "$rx_packets" =~ ^[0-9]+$ ]]; then
+            current_rx_packets=$((current_rx_packets + rx_packets))
+                    fi
+                    if [[ "$rx_errs" =~ ^[0-9]+$ ]]; then
+            current_rx_errors=$((current_rx_errors + rx_errs))
+                    fi
+                    if [[ "$rx_drop" =~ ^[0-9]+$ ]]; then
+                        current_rx_dropped=$((current_rx_dropped + rx_drop))
+                    fi
+                    if [[ "$tx_bytes" =~ ^[0-9]+$ ]]; then
+                        current_tx_bytes=$((current_tx_bytes + tx_bytes))
+                    fi
+                    if [[ "$tx_packets" =~ ^[0-9]+$ ]]; then
+                        current_tx_packets=$((current_tx_packets + tx_packets))
+                    fi
+                    if [[ "$tx_errs" =~ ^[0-9]+$ ]]; then
+            current_tx_errors=$((current_tx_errors + tx_errs))
+                    fi
+                    if [[ "$tx_drop" =~ ^[0-9]+$ ]]; then
+            current_tx_dropped=$((current_tx_dropped + tx_drop))
+        fi
+                fi
+            fi
+        done < /proc/net/dev 2>/dev/null
     fi
 
-    # Calculate rates from previous data
+    # Initialize rate variables
     net_rx_bytes_per_sec=0
     net_tx_bytes_per_sec=0
     net_rx_packets_per_sec=0
     net_tx_packets_per_sec=0
     time_interval=0
 
+    # Try to read previous stats for rate calculation
     if [ -f "$NET_STATS_FILE" ] && [ -r "$NET_STATS_FILE" ]; then
         local prev_data
-        prev_data=$(cat "$NET_STATS_FILE" 2>/dev/null || echo "")
+        prev_data=$(cat "$NET_STATS_FILE" 2>/dev/null) || prev_data=""
 
         if [ -n "$prev_data" ]; then
-            local prev_array=($prev_data)
-            if [ ${#prev_array[@]} -eq 5 ]; then
-                local prev_time="${prev_array[0]}"
-                local prev_rx_bytes="${prev_array[1]}"
-                local prev_tx_bytes="${prev_array[2]}"
-                local prev_rx_packets="${prev_array[3]}"
-                local prev_tx_packets="${prev_array[4]}"
+            # Parse previous data safely
+            local prev_values=($prev_data)
+            if [ ${#prev_values[@]} -eq 5 ]; then
+                local prev_time="${prev_values[0]}"
+                local prev_rx_bytes="${prev_values[1]}"
+                local prev_tx_bytes="${prev_values[2]}"
+                local prev_rx_packets="${prev_values[3]}"
+                local prev_tx_packets="${prev_values[4]}"
 
-                if is_numeric "$prev_time" && is_numeric "$prev_rx_bytes" &&
-                   is_numeric "$prev_tx_bytes" && is_numeric "$prev_rx_packets" &&
-                   is_numeric "$prev_tx_packets"; then
+                # Validate all previous values are numeric
+                if [[ "$prev_time" =~ ^[0-9]+$ ]] && [[ "$prev_rx_bytes" =~ ^[0-9]+$ ]] &&
+                   [[ "$prev_tx_bytes" =~ ^[0-9]+$ ]] && [[ "$prev_rx_packets" =~ ^[0-9]+$ ]] &&
+                   [[ "$prev_tx_packets" =~ ^[0-9]+$ ]]; then
 
+                    # Calculate time interval
                     if [ "$current_time" -gt "$prev_time" ]; then
             time_interval=$((current_time - prev_time))
 
-                        # Reasonable time interval (10 seconds to 10 minutes)
-                        if [ "$time_interval" -ge 10 ] && [ "$time_interval" -le 600 ]; then
+                        # Reasonable time interval check (10 seconds to 20 minutes)
+                if [ "$time_interval" -ge 10 ] && [ "$time_interval" -le 1200 ]; then
+                            # Calculate differences safely
                     local rx_byte_diff=$((current_rx_bytes - prev_rx_bytes))
                     local tx_byte_diff=$((current_tx_bytes - prev_tx_bytes))
                     local rx_packet_diff=$((current_rx_packets - prev_rx_packets))
                     local tx_packet_diff=$((current_tx_packets - prev_tx_packets))
 
-                            # Handle counter resets
+                    # Handle counter resets (negative differences)
                             [ "$rx_byte_diff" -lt 0 ] && rx_byte_diff=0
                             [ "$tx_byte_diff" -lt 0 ] && tx_byte_diff=0
                             [ "$rx_packet_diff" -lt 0 ] && rx_packet_diff=0
                             [ "$tx_packet_diff" -lt 0 ] && tx_packet_diff=0
 
-                            # Calculate rates
+                            # Calculate per-second rates
                     net_rx_bytes_per_sec=$((rx_byte_diff / time_interval))
                     net_tx_bytes_per_sec=$((tx_byte_diff / time_interval))
                     net_rx_packets_per_sec=$((rx_packet_diff / time_interval))
@@ -308,57 +256,67 @@ collect_network_stats() {
     fi
     fi
 
-    # Store current stats for next run
+    # Store current stats for next run - with error handling
     echo "$current_time $current_rx_bytes $current_tx_bytes $current_rx_packets $current_tx_packets" > "$NET_STATS_FILE" 2>/dev/null || true
 
     # Set global variables
-    net_rx_bytes="$current_rx_bytes"
-    net_tx_bytes="$current_tx_bytes"
-    net_rx_packets="$current_rx_packets"
-    net_tx_packets="$current_tx_packets"
-    net_rx_errors="$current_rx_errors"
-    net_tx_errors="$current_tx_errors"
-    net_rx_dropped="$current_rx_dropped"
-    net_tx_dropped="$current_tx_dropped"
+    net_rx_bytes=$current_rx_bytes
+    net_tx_bytes=$current_tx_bytes
+    net_rx_packets=$current_rx_packets
+    net_tx_packets=$current_tx_packets
+    net_rx_errors=$current_rx_errors
+    net_tx_errors=$current_tx_errors
+    net_rx_dropped=$current_rx_dropped
+    net_tx_dropped=$current_tx_dropped
 }
 
-# Get interface details - simplified
-collect_interface_info() {
+# Get detailed interface information with speeds - SIMPLIFIED AND SAFER
+get_interface_details() {
     interface_details=""
     total_interface_speed=0
     active_interfaces=0
 
+    # Check each network interface safely
     if [ -d /sys/class/net ]; then
-        for iface_dir in /sys/class/net/*; do
-            [ -d "$iface_dir" ] || continue
-            local iface=$(basename "$iface_dir")
+    for iface_path in /sys/class/net/*; do
+        [ -d "$iface_path" ] || continue
+        local iface=$(basename "$iface_path")
 
-            # Skip virtual interfaces
+        # Skip loopback and virtual interfaces
         [[ "$iface" =~ ^(lo|docker|veth|br-) ]] && continue
 
         # Check if interface is up
             local operstate="down"
-            if [ -f "$iface_dir/operstate" ] && [ -r "$iface_dir/operstate" ]; then
-                operstate=$(cat "$iface_dir/operstate" 2>/dev/null || echo "down")
+            if [ -f "$iface_path/operstate" ] && [ -r "$iface_path/operstate" ]; then
+                operstate=$(cat "$iface_path/operstate" 2>/dev/null || echo "down")
             fi
 
         if [ "$operstate" = "up" ]; then
-                local speed=1000  # Default to 1Gbps
-                local speed_display="1000Mbps"
+                # Get interface speed safely
+            local speed=0
+            local speed_display="unknown"
 
-                if [ -f "$iface_dir/speed" ] && [ -r "$iface_dir/speed" ]; then
-                    local speed_raw=$(cat "$iface_dir/speed" 2>/dev/null || echo "1000")
-                    if is_numeric "$speed_raw" && [ "$speed_raw" -gt 0 ]; then
-                        speed="$speed_raw"
+                if [ -f "$iface_path/speed" ] && [ -r "$iface_path/speed" ]; then
+                local speed_raw=$(cat "$iface_path/speed" 2>/dev/null || echo "0")
+                    if [[ "$speed_raw" =~ ^[0-9]+$ ]] && [ "$speed_raw" -gt 0 ]; then
+                        speed=$speed_raw
                         speed_display="${speed}Mbps"
+                total_interface_speed=$((total_interface_speed + speed))
+                        active_interfaces=$((active_interfaces + 1))
                     elif [ "$speed_raw" = "-1" ]; then
-                    speed_display="virtual"
+                        # Virtual interface
+                        speed_display="virtual"
+                        total_interface_speed=$((total_interface_speed + 1000))
+                        active_interfaces=$((active_interfaces + 1))
                     fi
+                else
+                    # Assume virtual interface if speed file doesn't exist
+                    speed_display="virtual"
+                total_interface_speed=$((total_interface_speed + 1000))
+                active_interfaces=$((active_interfaces + 1))
                 fi
 
-                total_interface_speed=$((total_interface_speed + speed))
-                active_interfaces=$((active_interfaces + 1))
-
+                # Add to interface details safely
             if [ -n "$interface_details" ]; then
                     interface_details="${interface_details},${iface}:${speed_display}"
                 else
@@ -367,15 +325,21 @@ collect_interface_info() {
         fi
     done
     fi
+}
 
-    # Calculate network utilization
+# Calculate network utilization percentage - SAFER VERSION
+calculate_network_utilization() {
     net_rx_utilization="0.00"
     net_tx_utilization="0.00"
     net_total_utilization="0.00"
 
+    # Only calculate if we have valid data
     if [ "$total_interface_speed" -gt 0 ] &&
-       ([ "$net_rx_bytes_per_sec" -gt 0 ] || [ "$net_tx_bytes_per_sec" -gt 0 ]); then
+       [[ "$net_rx_bytes_per_sec" =~ ^[0-9]+$ ]] &&
+       [[ "$net_tx_bytes_per_sec" =~ ^[0-9]+$ ]]; then
 
+        if [ "$net_rx_bytes_per_sec" -gt 0 ] || [ "$net_tx_bytes_per_sec" -gt 0 ]; then
+            # Use awk for safe floating point calculation
             local rx_mbps=$(awk -v bytes="$net_rx_bytes_per_sec" 'BEGIN {printf "%.2f", (bytes * 8) / 1000000}' 2>/dev/null || echo "0.00")
             local tx_mbps=$(awk -v bytes="$net_tx_bytes_per_sec" 'BEGIN {printf "%.2f", (bytes * 8) / 1000000}' 2>/dev/null || echo "0.00")
 
@@ -387,135 +351,208 @@ collect_interface_info() {
                 if (speed > 0) printf "%.2f", (tx / speed) * 100; else print "0.00"
             }' 2>/dev/null || echo "0.00")
 
+            # Total utilization is the higher of RX or TX
             net_total_utilization=$(awk -v rx="$net_rx_utilization" -v tx="$net_tx_utilization" 'BEGIN {
                 printf "%.2f", (rx > tx) ? rx : tx
             }' 2>/dev/null || echo "0.00")
     fi
+    fi
 }
 
-# System information
-collect_system_info() {
+# Call network collection functions
+collect_network_stats
+get_interface_details
+calculate_network_utilization
+
+# Ensure all network variables have valid defaults
+net_rx_bytes=${net_rx_bytes:-0}
+net_tx_bytes=${net_tx_bytes:-0}
+net_rx_packets=${net_rx_packets:-0}
+net_tx_packets=${net_tx_packets:-0}
+net_rx_bytes_per_sec=${net_rx_bytes_per_sec:-0}
+net_tx_bytes_per_sec=${net_tx_bytes_per_sec:-0}
+net_rx_packets_per_sec=${net_rx_packets_per_sec:-0}
+net_tx_packets_per_sec=${net_tx_packets_per_sec:-0}
+net_rx_errors=${net_rx_errors:-0}
+net_tx_errors=${net_tx_errors:-0}
+net_rx_dropped=${net_rx_dropped:-0}
+net_tx_dropped=${net_tx_dropped:-0}
+net_rx_utilization=${net_rx_utilization:-0.00}
+net_tx_utilization=${net_tx_utilization:-0.00}
+net_total_utilization=${net_total_utilization:-0.00}
+total_interface_speed=${total_interface_speed:-0}
+active_interfaces=${active_interfaces:-0}
+time_interval=${time_interval:-0}
+interface_details=${interface_details:-""}
+
+# System information - with error handling
 hostname=$(hostname 2>/dev/null || echo "unknown")
 kernel_version=$(uname -r 2>/dev/null || echo "unknown")
 
-    # OS information
+# OS information - safer parsing
+os_name="unknown"
+os_version="unknown"
 if [ -f /etc/os-release ] && [ -r /etc/os-release ]; then
-        local name_line version_line
-        name_line=$(grep "^NAME=" /etc/os-release 2>/dev/null || echo "")
-        version_line=$(grep "^VERSION_ID=" /etc/os-release 2>/dev/null || echo "")
-
-        if [ -n "$name_line" ]; then
-            os_name=$(echo "$name_line" | cut -d= -f2 | tr -d '"' 2>/dev/null || echo "unknown")
-        fi
-        if [ -n "$version_line" ]; then
-            os_version=$(echo "$version_line" | cut -d= -f2 | tr -d '"' 2>/dev/null || echo "unknown")
-        fi
+    # Source safely
+    {
+        NAME=""
+        VERSION_ID=""
+        source /etc/os-release 2>/dev/null
+        [ -n "$NAME" ] && os_name="$NAME"
+        [ -n "$VERSION_ID" ] && os_version="$VERSION_ID"
+    }
+elif [ -f /etc/redhat-release ] && [ -r /etc/redhat-release ]; then
+    os_name=$(cat /etc/redhat-release 2>/dev/null || echo "unknown")
+elif [ -f /etc/debian_version ] && [ -r /etc/debian_version ]; then
+    os_name="Debian"
+    os_version=$(cat /etc/debian_version 2>/dev/null || echo "unknown")
 fi
 
-    # Process count
+# Process count - safer parsing
+process_count=0
 if [[ "$running_processes" =~ ^[0-9]+/([0-9]+)$ ]]; then
     process_count="${BASH_REMATCH[1]}"
-    elif is_numeric "$total_processes"; then
+elif [[ "$total_processes" =~ ^[0-9]+$ ]]; then
     process_count="$total_processes"
 fi
 
-    # Open files
+# Open file descriptors
+open_files=0
 if [ -r /proc/sys/fs/file-nr ]; then
     open_files=$(awk '{print int($1)}' /proc/sys/fs/file-nr 2>/dev/null || echo "0")
 fi
 
-    # TCP connections - simplified
+# TCP connections count - safer version
+tcp_connections=0
 if [ -r /proc/net/tcp ]; then
-        tcp_connections=$(awk 'NR>1 {count++} END {print count+0}' /proc/net/tcp 2>/dev/null || echo "0")
+    tcp4_count=$(awk 'NR>1 {count++} END {print count+0}' /proc/net/tcp 2>/dev/null || echo "0")
+    tcp6_count=0
     if [ -r /proc/net/tcp6 ]; then
-            local tcp6_count=$(awk 'NR>1 {count++} END {print count+0}' /proc/net/tcp6 2>/dev/null || echo "0")
-            tcp_connections=$((tcp_connections + tcp6_count))
-fi
-fi
-}
-
-# IP address information - with strict timeouts
-collect_ip_info() {
-    # Local IPs
-if command -v hostname >/dev/null 2>&1; then
-        local_ips=$(timeout 3 hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | grep -v '^127\.' | tr '\n' ',' | sed 's/,$//' 2>/dev/null || echo "")
-        primary_ip=$(echo "$local_ips" | cut -d, -f1 2>/dev/null || echo "")
-fi
-
-    # External IP with very strict timeout
-if command -v curl >/dev/null 2>&1; then
-        external_ip=$(timeout 3 curl -s --connect-timeout 2 --max-time 3 "https://ipv4.icanhazip.com" 2>/dev/null | tr -d '\n\r' | head -c 15 || echo "unknown")
-        # Validate IP format
-        if ! [[ "$external_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-    external_ip="unknown"
-fi
+        tcp6_count=$(awk 'NR>1 {count++} END {print count+0}' /proc/net/tcp6 2>/dev/null || echo "0")
     fi
-}
+    tcp_connections=$((tcp4_count + tcp6_count))
+fi
 
-# JSON escaping function
+# System load per core - safer calculation
+load_per_core="0.00"
+if [ "$cpu_cores" -gt 0 ] && [[ "$load1" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+    load_per_core=$(awk -v load="$load1" -v cores="$cpu_cores" 'BEGIN {printf "%.2f", load / cores}' 2>/dev/null || echo "0.00")
+fi
+
+# IP Address Information - with timeouts and error handling
+local_ips=""
+primary_ip=""
+external_ip="unknown"
+
+# Get local IPs safely
+if command -v hostname >/dev/null 2>&1; then
+    local_ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.' | grep -v '^127\.' | tr '\n' ',' | sed 's/,$//' 2>/dev/null || echo "")
+    primary_ip=$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i!~"^127\\.") {print $i; exit}}' 2>/dev/null || echo "")
+fi
+
+# Get external IP with strict timeout and error handling
+if command -v curl >/dev/null 2>&1; then
+    for service in "https://ipv4.icanhazip.com" "https://api.ipify.org"; do
+        external_ip=$(timeout 5 curl -s --connect-timeout 3 --max-time 5 "$service" 2>/dev/null | tr -d '\n\r' || echo "")
+        if [[ "$external_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            break
+        fi
+    external_ip="unknown"
+done
+fi
+
+# Escape strings for JSON - safer version
 escape_json() {
     local input="$1"
-    input="${input//\\/\\\\}"
-    input="${input//\"/\\\"}"
-    input="${input//$'\t'/\\t}"
-    input="${input//$'\r'/\\r}"
-    input="${input//$'\n'/\\n}"
+    # Replace problematic characters
+    input="${input//\\/\\\\}"  # backslash
+    input="${input//\"/\\\"}"  # quote
+    input="${input//$'\t'/\\t}" # tab
+    input="${input//$'\r'/\\r}" # carriage return
+    input="${input//$'\n'/\\n}" # newline
     echo "$input"
 }
 
-# Main collection process
-main() {
-    collect_basic_stats
-    collect_memory_stats
-    collect_cpu_stats
-    collect_filesystem_stats
-    collect_network_stats
-    collect_interface_info
-    collect_system_info
-    collect_ip_info
+# Escape variables safely
+local_ips_escaped=$(escape_json "$local_ips")
+primary_ip_escaped=$(escape_json "$primary_ip")
+external_ip_escaped=$(escape_json "$external_ip")
+interface_details_escaped=$(escape_json "$interface_details")
+hostname_escaped=$(escape_json "$hostname")
+kernel_version_escaped=$(escape_json "$kernel_version")
+os_name_escaped=$(escape_json "$os_name")
+os_version_escaped=$(escape_json "$os_version")
 
-    # Escape variables
-    local hostname_escaped=$(escape_json "$hostname")
-    local kernel_version_escaped=$(escape_json "$kernel_version")
-    local os_name_escaped=$(escape_json "$os_name")
-    local os_version_escaped=$(escape_json "$os_version")
-    local local_ips_escaped=$(escape_json "$local_ips")
-    local primary_ip_escaped=$(escape_json "$primary_ip")
-    local external_ip_escaped=$(escape_json "$external_ip")
-    local interface_details_escaped=$(escape_json "$interface_details")
+# Prepare JSON payload
+json_payload=$(cat <<EOF
+{
+  "uptime_seconds": $uptime_seconds,
+  "loadavg_1": $load1,
+  "loadavg_5": $load5,
+  "loadavg_15": $load15,
+  "load_per_core": $load_per_core,
+  "mem_total_kb": $mem_total_kb,
+  "mem_free_kb": $mem_free_kb,
+  "mem_available_kb": $mem_available_kb,
+  "mem_used_kb": $mem_used_kb,
+  "mem_usage_percent": $mem_usage_percent,
+  "mem_buffers_kb": $mem_buffers_kb,
+  "mem_cached_kb": $mem_cached_kb,
+  "swap_total_kb": $swap_total_kb,
+  "swap_free_kb": $swap_free_kb,
+  "cpu_user_ticks": $cpu_user_ticks,
+  "cpu_system_ticks": $cpu_system_ticks,
+  "cpu_idle_ticks": $cpu_idle_ticks,
+  "cpu_iowait_ticks": $cpu_iowait_ticks,
+  "cpu_cores": $cpu_cores,
+  "rootfs_total_kb": $rootfs_total_kb,
+  "rootfs_used_kb": $rootfs_used_kb,
+  "rootfs_available_kb": $rootfs_available_kb,
+  "rootfs_used_percent": $rootfs_used_percent,
+  "net_rx_bytes": $net_rx_bytes,
+  "net_tx_bytes": $net_tx_bytes,
+  "net_rx_bytes_per_sec": $net_rx_bytes_per_sec,
+  "net_tx_bytes_per_sec": $net_tx_bytes_per_sec,
+  "net_rx_packets": $net_rx_packets,
+  "net_tx_packets": $net_tx_packets,
+  "net_rx_packets_per_sec": $net_rx_packets_per_sec,
+  "net_tx_packets_per_sec": $net_tx_packets_per_sec,
+  "net_rx_errors": $net_rx_errors,
+  "net_tx_errors": $net_tx_errors,
+  "net_rx_dropped": $net_rx_dropped,
+  "net_tx_dropped": $net_tx_dropped,
+  "net_rx_utilization": $net_rx_utilization,
+  "net_tx_utilization": $net_tx_utilization,
+  "net_total_utilization": $net_total_utilization,
+  "net_interface_speed_mbps": $total_interface_speed,
+  "net_active_interfaces": $active_interfaces,
+  "net_interval_seconds": $time_interval,
+  "hostname": "$hostname_escaped",
+  "kernel_version": "$kernel_version_escaped",
+  "os_name": "$os_name_escaped",
+  "os_version": "$os_version_escaped",
+  "process_count": $process_count,
+  "open_files": $open_files,
+  "tcp_connections": $tcp_connections,
+  "local_ips": "$local_ips_escaped",
+  "primary_ip": "$primary_ip_escaped",
+  "external_ip": "$external_ip_escaped",
+  "interface_info": "$interface_details_escaped",
+  "timestamp": "$collection_timestamp"
+}
+EOF
+)
 
-    # Build JSON payload using printf for better memory efficiency
-    local json_payload
-    json_payload=$(printf '{"uptime_seconds":%d,"loadavg_1":%s,"loadavg_5":%s,"loadavg_15":%s,"load_per_core":%s,"mem_total_kb":%d,"mem_free_kb":%d,"mem_available_kb":%d,"mem_used_kb":%d,"mem_usage_percent":%s,"mem_buffers_kb":%d,"mem_cached_kb":%d,"swap_total_kb":%d,"swap_free_kb":%d,"cpu_user_ticks":%d,"cpu_system_ticks":%d,"cpu_idle_ticks":%d,"cpu_iowait_ticks":%d,"cpu_cores":%d,"rootfs_total_kb":%d,"rootfs_used_kb":%d,"rootfs_available_kb":%d,"rootfs_used_percent":%d,"net_rx_bytes":%d,"net_tx_bytes":%d,"net_rx_bytes_per_sec":%d,"net_tx_bytes_per_sec":%d,"net_rx_packets":%d,"net_tx_packets":%d,"net_rx_packets_per_sec":%d,"net_tx_packets_per_sec":%d,"net_rx_errors":%d,"net_tx_errors":%d,"net_rx_dropped":%d,"net_tx_dropped":%d,"net_rx_utilization":%s,"net_tx_utilization":%s,"net_total_utilization":%s,"net_interface_speed_mbps":%d,"net_active_interfaces":%d,"net_interval_seconds":%d,"hostname":"%s","kernel_version":"%s","os_name":"%s","os_version":"%s","process_count":%d,"open_files":%d,"tcp_connections":%d,"local_ips":"%s","primary_ip":"%s","external_ip":"%s","interface_info":"%s","timestamp":"%s"}' \
-        "$uptime_seconds" "$load1" "$load5" "$load15" "$load_per_core" \
-        "$mem_total_kb" "$mem_free_kb" "$mem_available_kb" "$mem_used_kb" "$mem_usage_percent" \
-        "$mem_buffers_kb" "$mem_cached_kb" "$swap_total_kb" "$swap_free_kb" \
-        "$cpu_user_ticks" "$cpu_system_ticks" "$cpu_idle_ticks" "$cpu_iowait_ticks" "$cpu_cores" \
-        "$rootfs_total_kb" "$rootfs_used_kb" "$rootfs_available_kb" "$rootfs_used_percent" \
-        "$net_rx_bytes" "$net_tx_bytes" "$net_rx_bytes_per_sec" "$net_tx_bytes_per_sec" \
-        "$net_rx_packets" "$net_tx_packets" "$net_rx_packets_per_sec" "$net_tx_packets_per_sec" \
-        "$net_rx_errors" "$net_tx_errors" "$net_rx_dropped" "$net_tx_dropped" \
-        "$net_rx_utilization" "$net_tx_utilization" "$net_total_utilization" \
-        "$total_interface_speed" "$active_interfaces" "$time_interval" \
-        "$hostname_escaped" "$kernel_version_escaped" "$os_name_escaped" "$os_version_escaped" \
-        "$process_count" "$open_files" "$tcp_connections" \
-        "$local_ips_escaped" "$primary_ip_escaped" "$external_ip_escaped" "$interface_details_escaped" \
-        "$collection_timestamp")
+# Random sending delay to prevent API load spikes
+sending_delay=$((RANDOM % 41))  # 0-40 seconds
+sleep $sending_delay
 
-    # Random delay to prevent API load spikes (reduced from 40 to 20 seconds)
-    local sending_delay=$((RANDOM % 21))
-    sleep "$sending_delay"
-
-    # Send metrics with strict timeout
+# Send metrics via curl with better error handling
 if command -v curl >/dev/null 2>&1; then
-        timeout 15 curl -s -X POST \
+    timeout 30 curl -s -X POST \
   "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats" \
   -H "Content-Type: application/json" \
   -H "X-Monitor-Secret: ${SECRET_CODE}" \
   -d "$json_payload" \
       >/dev/null 2>&1 || true
 fi
-}
-
-# Run main function
-main
