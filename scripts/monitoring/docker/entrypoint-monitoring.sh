@@ -6,6 +6,11 @@ set -e
 if [ -n "$SITECENTER_ACCOUNT" ] && [ -n "$SITECENTER_MONITOR" ] && [ -n "$SITECENTER_SECRET" ]; then
     echo "Setting up SiteCenter monitoring..."
 
+    # Disable cron mail to prevent exim4 zombie processes
+    export MAILTO=""
+    echo "MAILTO=''" >> /etc/crontab
+    echo "MAILTO=''" > /etc/cron.d/disable-mail
+
     # Start cron daemon
     service cron start 2>/dev/null || crond -b 2>/dev/null || true
 
@@ -31,7 +36,9 @@ EOF
     chmod +x /usr/local/bin/sitecenter-env.sh
 
     # Setup monitoring job (preserves existing cron jobs)
-    MONITORING_JOB="* * * * * /usr/local/bin/sitecenter-docker-stats.sh"
+    # Add MAILTO='' to prevent mail from this specific job
+    MONITORING_JOB="MAILTO=''
+* * * * * /usr/local/bin/sitecenter-docker-stats.sh"
     {
         crontab -l 2>/dev/null | grep -v "sitecenter-docker-stats.sh" || true
         echo "$MONITORING_JOB"
