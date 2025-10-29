@@ -1,12 +1,22 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
-# Version: 2025-08-21-NETWORK-FIXED
+# Version: 2025-08-21-NETWORK-FIXED-STOP-ON-ERROR
 
 set -e
+
+# Environment file path
+ENV_FILE="/usr/local/bin/sitecenter-host-env.sh"
+
 # Source environment variables
-if [ -f /usr/local/bin/sitecenter-host-env.sh ]; then
-    source /usr/local/bin/sitecenter-host-env.sh 2>/dev/null || true
+if [ -f "$ENV_FILE" ]; then
+    source "$ENV_FILE" 2>/dev/null || true
+fi
+
+# Check if monitoring is stopped
+if [ "${SITECENTER_STOPPED:-false}" = "true" ]; then
+    echo "Monitoring is stopped. Exiting..." >&2
+    exit 0
 fi
 
 ACCOUNT_CODE="${1:-$SITECENTER_ACCOUNT}"
@@ -214,16 +224,20 @@ collect_network_stats() {
         if [ -n "$prev_data" ]; then
             # Parse previous data safely
             local prev_values=($prev_data)
-            if [ ${#prev_values[@]} -eq 5 ]; then
-                local prev_time="${prev_values[0]}"
-                local prev_rx_bytes="${prev_values[1]}"
-                local prev_tx_bytes="${prev_values[2]}"
-                local prev_rx_packets="${prev_values[3]}"
-                local prev_tx_packets="${prev_values[4]}"
 
-                # Validate all previous values are numeric
-                if [[ "$prev_time" =~ ^[0-9]+$ ]] && [[ "$prev_rx_bytes" =~ ^[0-9]+$ ]] &&
-                   [[ "$prev_tx_bytes" =~ ^[0-9]+$ ]] && [[ "$prev_rx_packets" =~ ^[0-9]+$ ]] &&
+            # Validate we have enough values
+            if [ ${#prev_values[@]} -ge 5 ]; then
+                local prev_time="${prev_values[0]:-0}"
+                local prev_rx_bytes="${prev_values[1]:-0}"
+                local prev_tx_bytes="${prev_values[2]:-0}"
+                local prev_rx_packets="${prev_values[3]:-0}"
+                local prev_tx_packets="${prev_values[4]:-0}"
+
+                # Validate all are numeric
+                if [[ "$prev_time" =~ ^[0-9]+$ ]] && \
+                   [[ "$prev_rx_bytes" =~ ^[0-9]+$ ]] && \
+                   [[ "$prev_tx_bytes" =~ ^[0-9]+$ ]] && \
+                   [[ "$prev_rx_packets" =~ ^[0-9]+$ ]] && \
                    [[ "$prev_tx_packets" =~ ^[0-9]+$ ]]; then
 
                     # Calculate time interval
@@ -518,12 +532,69 @@ EOF
 sending_delay=$((RANDOM % 41))  # 0-40 seconds
 sleep $sending_delay
 
-# Send metrics via curl with better error handling
+# Function to mark monitoring as stopped
+mark_as_stopped() {
+    local reason="$1"
+    echo "CRITICAL: $reason - Stopping monitoring" >&2
+
+    # Create or update environment file with STOPPED flag
+    if [ -w "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
+        # Backup existing file if it exists
+        if [ -f "$ENV_FILE" ]; then
+            cp "$ENV_FILE" "${ENV_FILE}.bak" 2>/dev/null || true
+        fi
+
+        # Create new file or update existing
+        {
+            echo "# SiteCenter Host Monitoring Configuration"
+            echo "# Generated: $(date)"
+            echo ""
+            echo "# Monitoring stopped due to: $reason"
+            echo "SITECENTER_STOPPED=true"
+            echo ""
+            echo "# Original configuration (if any)"
+            if [ -f "${ENV_FILE}.bak" ]; then
+                grep -v "^SITECENTER_STOPPED=" "${ENV_FILE}.bak" 2>/dev/null || true
+            fi
+        } > "$ENV_FILE"
+
+        echo "Monitoring has been disabled. To re-enable, edit $ENV_FILE and set SITECENTER_STOPPED=false" >&2
+    else
+        echo "ERROR: Cannot write to $ENV_FILE - monitoring will continue but won't persist stopped state" >&2
+    fi
+}
+
+# Send metrics via curl and capture response
 if command -v curl >/dev/null 2>&1; then
-    timeout 30 curl -s -X POST \
+    response=$(timeout 30 curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
   "https://mon.sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats" \
   -H "Content-Type: application/json" \
   -H "X-Monitor-Secret: ${SECRET_CODE}" \
-  -d "$json_payload" \
-      >/dev/null 2>&1 || true
+        -d "$json_payload" 2>&1) || true
+
+    # Extract HTTP code and response body
+    http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
+    response_body=$(echo "$response" | sed '/HTTP_CODE:/d')
+
+    # Check for critical errors in the response
+    if echo "$response_body" | grep -q "Invalid secret!"; then
+        mark_as_stopped "Invalid secret"
+        exit 1
+    fi
+
+    if echo "$response_body" | grep -q "Monitor is not active!"; then
+        mark_as_stopped "Monitor is not active"
+        exit 1
 fi
+
+    # Log successful submission (optional)
+    if [ "$http_code" = "200" ]; then
+        # Success - no action needed
+        :
+    else
+        # Non-critical error - log but continue
+        echo "Warning: Received HTTP code $http_code" >&2
+    fi
+fi
+
+exit 0
