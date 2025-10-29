@@ -8,8 +8,8 @@ if [ -n "$SITECENTER_ACCOUNT" ] && [ -n "$SITECENTER_MONITOR" ] && [ -n "$SITECE
 
     # Disable cron mail to prevent exim4 zombie processes
     export MAILTO=""
-    echo "MAILTO=''" >> /etc/crontab
-    echo "MAILTO=''" > /etc/cron.d/disable-mail
+    echo "MAILTO=" >> /etc/crontab
+    echo "MAILTO=" > /etc/cron.d/disable-mail
 
     # Start cron daemon
     service cron start 2>/dev/null || crond -b 2>/dev/null || true
@@ -37,7 +37,7 @@ EOF
 
     # Setup monitoring job (preserves existing cron jobs)
     # Add MAILTO='' to prevent mail from this specific job
-    MONITORING_JOB="MAILTO=''
+    MONITORING_JOB="MAILTO=
 * * * * * /usr/local/bin/sitecenter-docker-stats.sh"
     {
         crontab -l 2>/dev/null | grep -v "sitecenter-docker-stats.sh" || true
