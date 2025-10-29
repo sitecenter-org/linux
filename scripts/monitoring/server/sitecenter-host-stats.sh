@@ -546,16 +546,14 @@ mark_as_stopped() {
 
         # Create new file or update existing
         {
-            echo "# SiteCenter Host Monitoring Configuration"
-            echo "# Generated: $(date)"
-            echo ""
-            echo "# Monitoring stopped due to: $reason"
-            echo "SITECENTER_STOPPED=true"
-            echo ""
-            echo "# Original configuration (if any)"
             if [ -f "${ENV_FILE}.bak" ]; then
                 grep -v "^SITECENTER_STOPPED=" "${ENV_FILE}.bak" 2>/dev/null || true
             fi
+            echo ""
+            echo "# Monitoring stopped due to: $reason"
+            echo "# Generated: $(date)"
+            echo "SITECENTER_STOPPED=true"
+            echo ""
         } > "$ENV_FILE"
 
         echo "Monitoring has been disabled. To re-enable, edit $ENV_FILE and set SITECENTER_STOPPED=false" >&2
