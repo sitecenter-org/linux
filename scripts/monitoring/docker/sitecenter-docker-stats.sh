@@ -516,10 +516,24 @@ if [ -r /proc ]; then
     process_count=$(find /proc -maxdepth 1 -type d -name '[0-9]*' 2>/dev/null | wc -l)
 fi
 
-# Open files count - with error handling
+# Open files count - Docker-compatible using /proc filesystem
 open_files=0
-if command -v lsof >/dev/null 2>&1; then
-    open_files=$(lsof 2>/dev/null | wc -l 2>/dev/null || echo "0")
+if [ -r /proc ]; then
+    # Count file descriptors from /proc/[pid]/fd/ for all processes
+    # This works reliably in containers without needing lsof
+    for pid_dir in /proc/[0-9]*; do
+        if [ -d "$pid_dir/fd" ]; then
+            fd_count=$(find "$pid_dir/fd" -type l 2>/dev/null | wc -l)
+            open_files=$((open_files + fd_count))
+        fi
+    done
+fi
+
+# Fallback: if the above didn't work, try system-wide file-nr
+if [ "$open_files" -eq 0 ] && [ -r /proc/sys/fs/file-nr ]; then
+    # file-nr format: allocated_handles free_handles maximum
+    # First field is the number of allocated file handles
+    open_files=$(awk '{print $1}' /proc/sys/fs/file-nr 2>/dev/null || echo "0")
 fi
 
 # TCP connections count (container) - robust version
