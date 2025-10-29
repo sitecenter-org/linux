@@ -37,11 +37,11 @@ EOF
 
     # Setup monitoring job (preserves existing cron jobs)
     # Add MAILTO='' to prevent mail from this specific job
-    {
-        crontab -l 2>/dev/null | grep -v "sitecenter-docker-stats.sh" || true
-        echo "MAILTO="
+    (
+        crontab -l 2>/dev/null | grep -v "sitecenter-docker-stats.sh" | grep -v "^MAILTO=" || true
+        echo "MAILTO=\"\""
         echo "* * * * * /usr/local/bin/sitecenter-docker-stats.sh"
-    } | crontab -
+    ) | crontab -
 
     echo "Monitoring active (every minute)"
     echo "NODE_NAME:$NODE_NAME"
