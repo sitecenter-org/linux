@@ -15,7 +15,7 @@ if [ -n "$SITECENTER_ACCOUNT" ] && [ -n "$SITECENTER_MONITOR" ] && [ -n "$SITECE
     service cron start 2>/dev/null || crond -b 2>/dev/null || true
 
 # Create environment file for cron with current Docker environment variables
-    cat > /usr/local/bin/sitecenter-env.sh << EOF
+    cat > /usr/local/bin/sitecenter-docker-env.sh << EOF
 #!/bin/bash
 export NODE_NAME="${NODE_NAME:-}"
 export APP_NAME="${APP_NAME:-}"
@@ -33,7 +33,7 @@ export SITECENTER_MONITOR="${SITECENTER_MONITOR:-}"
 export SITECENTER_SECRET="${SITECENTER_SECRET:-}"
 export DOCKER_HOST_NAME="${DOCKER_HOST_NAME:-}"
 EOF
-    chmod +x /usr/local/bin/sitecenter-env.sh
+    chmod +x /usr/local/bin/sitecenter-docker-env.sh
 
     # Setup monitoring job (preserves existing cron jobs)
     # Add MAILTO='' to prevent mail from this specific job
