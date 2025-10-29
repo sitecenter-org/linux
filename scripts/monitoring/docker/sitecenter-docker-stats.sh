@@ -64,7 +64,21 @@ NET_STATS_FILE="/tmp/sitecenter-docker-net-stats-${MONITOR_CODE}.tmp"
 current_time=$(date +%s)
 
 # Capture the exact collection timestamp in UTC (ISO 8601 format for Java)
-collection_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+# Alpine Linux doesn't support %3N for nanoseconds, so we calculate milliseconds manually
+collection_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S")
+# Try to get milliseconds if available, otherwise append .000
+if command -v date >/dev/null 2>&1; then
+    millisec=$(date -u +"%3N" 2>/dev/null)
+    # Check if the output looks like milliseconds (3 digits)
+    if [[ "$millisec" =~ ^[0-9]{3}$ ]]; then
+        collection_timestamp="${collection_timestamp}.${millisec}Z"
+    else
+        # Fallback: use .000 if %3N not supported
+        collection_timestamp="${collection_timestamp}.000Z"
+    fi
+else
+    collection_timestamp="${collection_timestamp}.000Z"
+fi
 
 # Container uptime (seconds) - actual container uptime, not host uptime
 container_uptime_seconds=0
@@ -334,9 +348,11 @@ collect_network_stats() {
     fi
 
     # Set defaults for rate calculations
-    local net_rx_bytes_per_sec=0 net_tx_bytes_per_sec=0
-    local net_rx_packets_per_sec=0 net_tx_packets_per_sec=0
-    local time_interval=0
+    net_rx_bytes_per_sec=0
+    net_tx_bytes_per_sec=0
+    net_rx_packets_per_sec=0
+    net_tx_packets_per_sec=0
+    time_interval=0
 
     # Read previous stats if file exists
     if [ -f "$NET_STATS_FILE" ]; then
@@ -383,9 +399,9 @@ collect_network_stats() {
     echo "$current_time $current_rx_bytes $current_tx_bytes $current_rx_packets $current_tx_packets" > "$NET_STATS_FILE" 2>/dev/null || true
 
     # Get interface speeds and utilization
-    local total_interface_speed=0
-    local active_interfaces=0
-    local interface_details=""
+    total_interface_speed=0
+    active_interfaces=0
+    interface_details=""
 
     if [ -r /sys/class/net ]; then
         for iface_path in /sys/class/net/*; do
@@ -418,7 +434,9 @@ collect_network_stats() {
     fi
 
     # Calculate network utilization percentage (if we have interface speed and rates)
-    local net_rx_utilization=0 net_tx_utilization=0 net_total_utilization=0
+    net_rx_utilization=0
+    net_tx_utilization=0
+    net_total_utilization=0
 
     if [ "$total_interface_speed" -gt 0 ] && [ "$time_interval" -gt 0 ]; then
         # Convert interface speed from Mbps to bytes per second
