@@ -13,10 +13,35 @@ if [ -f "$ENV_FILE" ]; then
     source "$ENV_FILE" 2>/dev/null || true
 fi
 
-# Check if monitoring is stopped
+# Check if monitoring is stopped permanently
 if [ "${SITECENTER_STOPPED:-false}" = "true" ]; then
-    echo "Monitoring is stopped. Exiting..." >&2
+    echo "Monitoring is stopped permanently. Exiting..." >&2
     exit 0
+fi
+
+# Check if monitoring is paused until a specific date
+if [ -n "${SITECENTER_PAUSED_TILL:-}" ]; then
+    current_date=$(date +%s)
+    pause_until=$(date -d "$SITECENTER_PAUSED_TILL" +%s 2>/dev/null || echo "0")
+
+    if [ "$pause_until" -gt 0 ]; then
+        if [ "$current_date" -ge "$pause_until" ]; then
+            # Pause period has expired - reset the variable and continue
+            echo "Pause period expired. Resetting SITECENTER_PAUSED_TILL and resuming monitoring..." >&2
+
+            # Remove SITECENTER_PAUSED_TILL from env file
+            if [ -f "$ENV_FILE" ]; then
+                sed -i '/^SITECENTER_PAUSED_TILL=/d' "$ENV_FILE" 2>/dev/null || true
+            fi
+        else
+            # Still paused
+            pause_remaining=$((pause_until - current_date))
+            hours_remaining=$((pause_remaining / 3600))
+            minutes_remaining=$(((pause_remaining % 3600) / 60))
+            echo "Monitoring is paused until $SITECENTER_PAUSED_TILL (${hours_remaining}h ${minutes_remaining}m remaining). Exiting..." >&2
+            exit 0
+        fi
+    fi
 fi
 
 ACCOUNT_CODE="${1:-$SITECENTER_ACCOUNT}"
@@ -532,10 +557,10 @@ EOF
 sending_delay=$((RANDOM % 41))  # 0-40 seconds
 sleep $sending_delay
 
-# Function to mark monitoring as stopped
+# Function to mark monitoring as stopped permanently
 mark_as_stopped() {
     local reason="$1"
-    echo "CRITICAL: $reason - Stopping monitoring" >&2
+    echo "CRITICAL: $reason - Stopping monitoring permanently" >&2
 
     # Create environment file if it doesn't exist
     if [ ! -f "$ENV_FILE" ]; then
@@ -560,7 +585,46 @@ mark_as_stopped() {
         }
     fi
 
-    echo "Monitoring has been disabled. To re-enable, edit $ENV_FILE and set SITECENTER_STOPPED=false" >&2
+    echo "Monitoring has been disabled permanently. To re-enable, edit $ENV_FILE and set SITECENTER_STOPPED=false" >&2
+}
+
+# Function to pause monitoring temporarily
+mark_as_paused() {
+    local reason="$1"
+    echo "WARNING: $reason - Pausing monitoring for 1 day" >&2
+
+    # Calculate pause until date (current date + 1 day)
+    pause_until_date=$(date -d "tomorrow" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || date -v+1d +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "")
+
+    if [ -z "$pause_until_date" ]; then
+        echo "ERROR: Cannot calculate pause date - continuing without pause" >&2
+        return 1
+    fi
+
+    # Create environment file if it doesn't exist
+    if [ ! -f "$ENV_FILE" ]; then
+        touch "$ENV_FILE" 2>/dev/null || {
+            echo "ERROR: Cannot create $ENV_FILE - monitoring will continue without pause" >&2
+            return 1
+        }
+    fi
+
+    # Check if SITECENTER_PAUSED_TILL variable exists in the file
+    if grep -q "^SITECENTER_PAUSED_TILL=" "$ENV_FILE" 2>/dev/null; then
+        # Variable exists - update it
+        sed -i "s/^SITECENTER_PAUSED_TILL=.*/SITECENTER_PAUSED_TILL=\"$pause_until_date\"/" "$ENV_FILE" 2>/dev/null || {
+            echo "ERROR: Cannot update $ENV_FILE" >&2
+            return 1
+        }
+    else
+        # Variable doesn't exist - append it
+        echo "SITECENTER_PAUSED_TILL=\"$pause_until_date\"" >> "$ENV_FILE" 2>/dev/null || {
+            echo "ERROR: Cannot write to $ENV_FILE" >&2
+            return 1
+        }
+    fi
+
+    echo "Monitoring paused until $pause_until_date. It will automatically resume after this time." >&2
 }
 
 # Send metrics via curl and capture response
@@ -582,7 +646,7 @@ if command -v curl >/dev/null 2>&1; then
     fi
 
     if echo "$response_body" | grep -q "Monitor is not active!"; then
-        mark_as_stopped "Monitor is not active"
+        mark_as_paused "Monitor is not active"
         exit 1
 fi
 
