@@ -22,7 +22,7 @@ ACCOUNT_CODE="${ACCOUNT_CODE}"
 MONITOR_CODE="${MONITOR_CODE}"
 ALIVE_CODE="${ALIVE_CODE}"
 
-curl -s -X POST "https://sitecenter.app/api/pub/v1/a/\${ACCOUNT_CODE}/heartbeat/\${MONITOR_CODE}/alive?aliveCode=\${ALIVE_CODE}" -H "Content-Type: application/json" > /dev/null
+curl -s -X POST "https://mon.sitecenter.app/api/pub/v1/a/\${ACCOUNT_CODE}/heartbeat/\${MONITOR_CODE}/alive?aliveCode=\${ALIVE_CODE}" -H "Content-Type: application/json" > /dev/null
 EOF
 
 chmod +x "$SCRIPT_PATH"

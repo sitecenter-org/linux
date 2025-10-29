@@ -413,10 +413,10 @@ sending_delay=$((RANDOM % 21))  # 0-20 seconds
 #echo "Delaying ${sending_delay} seconds to distribute API calls..." >&2
 sleep $sending_delay
 
-#echo "DEBUG: sending json to https://sitecenter.app/api/pub/v1/a/$ACCOUNT_CODE/monitor/$MONITOR_CODE/app-stats"
+#echo "DEBUG: sending json to https://mon.sitecenter.app/api/pub/v1/a/$ACCOUNT_CODE/monitor/$MONITOR_CODE/app-stats"
 # Send metrics via curl
 curl -s -X POST \
-  "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/app-stats" \
+  "https://mon.sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/app-stats" \
   -H "Content-Type: application/json" \
   -H "X-Monitor-Secret: ${SECRET_CODE}" \
   -d "$json_payload" \

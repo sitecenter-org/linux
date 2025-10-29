@@ -101,7 +101,7 @@ EOF
 )
 
 # Make API request
-API_URL="https://sitecenter.app/api/pub/v1/a/$ACCOUNT_CODE/ws/$WORKSPACE_ID/servers/autoRegisterNew"
+API_URL="https://mon.sitecenter.app/api/pub/v1/a/$ACCOUNT_CODE/ws/$WORKSPACE_ID/servers/autoRegisterNew"
 echo "API Endpoint: $API_URL"
 
 # Create temporary file for response

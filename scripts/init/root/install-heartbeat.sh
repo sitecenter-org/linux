@@ -21,7 +21,7 @@ sending_delay=$((RANDOM % 21))  # 0-20 seconds
 #echo "Delaying ${sending_delay} seconds to distribute API calls..." >&2
 sleep $sending_delay
 
-curl -s -X POST "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/heartbeat/${MONITOR_CODE}/alive?aliveCode=${ALIVE_CODE}" -H "Content-Type: application/json" > /dev/null
+curl -s -X POST "https://mon.sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/heartbeat/${MONITOR_CODE}/alive?aliveCode=${ALIVE_CODE}" -H "Content-Type: application/json" > /dev/null
 EOF
 
 chmod +x "$SCRIPT_PATH"

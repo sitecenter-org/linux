@@ -521,7 +521,7 @@ sleep $sending_delay
 # Send metrics via curl with better error handling
 if command -v curl >/dev/null 2>&1; then
     timeout 30 curl -s -X POST \
-  "https://sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats" \
+  "https://mon.sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats" \
   -H "Content-Type: application/json" \
   -H "X-Monitor-Secret: ${SECRET_CODE}" \
   -d "$json_payload" \
