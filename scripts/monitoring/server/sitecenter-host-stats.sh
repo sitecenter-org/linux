@@ -537,29 +537,30 @@ mark_as_stopped() {
     local reason="$1"
     echo "CRITICAL: $reason - Stopping monitoring" >&2
 
-    # Create or update environment file with STOPPED flag
-    if [ -w "$ENV_FILE" ] || [ ! -f "$ENV_FILE" ]; then
-        # Backup existing file if it exists
-        if [ -f "$ENV_FILE" ]; then
-            cp "$ENV_FILE" "${ENV_FILE}.bak" 2>/dev/null || true
-        fi
-
-        # Create new file or update existing
-        {
-            if [ -f "${ENV_FILE}.bak" ]; then
-                grep -v "^SITECENTER_STOPPED=" "${ENV_FILE}.bak" 2>/dev/null || true
+    # Create environment file if it doesn't exist
+    if [ ! -f "$ENV_FILE" ]; then
+        touch "$ENV_FILE" 2>/dev/null || {
+            echo "ERROR: Cannot create $ENV_FILE - monitoring will continue but won't persist stopped state" >&2
+            return 1
+        }
             fi
-            echo ""
-            echo "# Monitoring stopped due to: $reason"
-            echo "# Generated: $(date)"
-            echo "SITECENTER_STOPPED=true"
-            echo ""
-        } > "$ENV_FILE"
 
-        echo "Monitoring has been disabled. To re-enable, edit $ENV_FILE and set SITECENTER_STOPPED=false" >&2
+    # Check if SITECENTER_STOPPED variable exists in the file
+    if grep -q "^SITECENTER_STOPPED=" "$ENV_FILE" 2>/dev/null; then
+        # Variable exists - update it to true
+        sed -i 's/^SITECENTER_STOPPED=.*/SITECENTER_STOPPED=true/' "$ENV_FILE" 2>/dev/null || {
+            echo "ERROR: Cannot update $ENV_FILE" >&2
+            return 1
+        }
     else
-        echo "ERROR: Cannot write to $ENV_FILE - monitoring will continue but won't persist stopped state" >&2
+        # Variable doesn't exist - append it
+        echo "SITECENTER_STOPPED=true" >> "$ENV_FILE" 2>/dev/null || {
+            echo "ERROR: Cannot write to $ENV_FILE" >&2
+            return 1
+        }
     fi
+
+    echo "Monitoring has been disabled. To re-enable, edit $ENV_FILE and set SITECENTER_STOPPED=false" >&2
 }
 
 # Send metrics via curl and capture response
