@@ -1,6 +1,6 @@
 #!/bin/bash
 # Usage:
-# ./sitecenter-host-trace.sh [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE TARGETS_CSV]
+# ./sitecenter-host-mtr.sh [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE TARGETS_CSV]
 # Version: 2026-03-11
 
 set -u
@@ -10,8 +10,8 @@ ENV_FILE=""
 if [[ $# -gt 0 && ( "$1" == *.env || "$1" == */* ) ]]; then
     ENV_FILE="$1"
     shift
-elif [ -f "/usr/local/bin/sitecenter-host-trace-env.sh" ]; then
-    ENV_FILE="/usr/local/bin/sitecenter-host-trace-env.sh"
+elif [ -f "/usr/local/bin/sitecenter-host-mtr-env.sh" ]; then
+    ENV_FILE="/usr/local/bin/sitecenter-host-mtr-env.sh"
 fi
 
 if [[ -n "$ENV_FILE" && ! -r "$ENV_FILE" ]]; then
@@ -34,7 +34,7 @@ if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
 fi
 
 if [[ -z "$TARGETS_RAW" ]]; then
-  echo "No traceroute targets configured. Exiting..." >&2
+  echo "No MTR targets configured. Exiting..." >&2
   exit 0
 fi
 
@@ -45,6 +45,7 @@ fi
 
 SOURCE_HOST="$(hostname 2>/dev/null || echo unknown)"
 API_URL="https://mon.sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-trace"
+MTR_ARGS="-rwzbc100"
 
 json_escape() {
   printf '%s' "${1:-}" | sed ':a;N;$!ba;s/\\/\\\\/g;s/"/\\"/g;s/\r/\\r/g;s/\n/\\n/g;s/\t/\\t/g'
@@ -63,25 +64,31 @@ run_with_timeout() {
   fi
 }
 
-TRACE_TOOL=""
-TRACE_ARGS=""
-if command -v traceroute >/dev/null 2>&1; then
-  TRACE_TOOL="traceroute"
-  TRACE_ARGS="-n -w 2 -q 1"
-elif command -v tracepath >/dev/null 2>&1; then
-  TRACE_TOOL="tracepath"
-  TRACE_ARGS="-n"
-fi
+extract_summary() {
+  printf '%s\n' "$1" | awk '
+    /^Start:/ { next }
+    /^HOST:/ { next }
+    /^[[:space:]]*[0-9]+\./ {
+      line=$0
+      sub(/^[[:space:]]+/, "", line)
+      last=line
+    }
+    END {
+      if (last != "") {
+        print last
+      }
+    }
+  '
+}
 
 send_trace_payload() {
   local target_host="$1"
   local ok="$2"
-  local trace_type="$3"
-  local command_str="$4"
-  local exit_code="$5"
-  local summary="$6"
-  local raw_output="$7"
-  local error_str="$8"
+  local command_str="$3"
+  local exit_code="$4"
+  local summary="$5"
+  local raw_output="$6"
+  local error_str="$7"
   local timestamp
   local payload
   local response
@@ -90,7 +97,7 @@ send_trace_payload() {
 
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   payload=$(cat <<EOF
-{"timestamp":"$(json_escape "$timestamp")","source_host":"$(json_escape "$SOURCE_HOST")","target_host":"$(json_escape "$target_host")","ok":$ok,"trace_type":"$(json_escape "$trace_type")","command":"$(json_escape "$command_str")","exit_code":$exit_code,"summary":"$(json_escape "$summary")","raw_output":"$(json_escape "$raw_output")","error":"$(json_escape "$error_str")"}
+{"timestamp":"$(json_escape "$timestamp")","source_host":"$(json_escape "$SOURCE_HOST")","target_host":"$(json_escape "$target_host")","ok":$ok,"trace_type":"mtr","command":"$(json_escape "$command_str")","exit_code":$exit_code,"summary":"$(json_escape "$summary")","raw_output":"$(json_escape "$raw_output")","error":"$(json_escape "$error_str")"}
 EOF
 )
 
@@ -104,12 +111,12 @@ EOF
   response_body=$(echo "$response" | sed '/HTTP_CODE:/d')
 
   if echo "$response_body" | grep -q "Invalid secret!"; then
-      echo "Invalid secret. Stopping traceroute monitor." >&2
+      echo "Invalid secret. Stopping MTR monitor." >&2
       exit 1
   fi
 
   if echo "$response_body" | grep -q "Monitor is not active!"; then
-      echo "Monitor is not active. Pausing traceroute monitor." >&2
+      echo "Monitor is not active. Pausing MTR monitor." >&2
       exit 1
   fi
 
@@ -120,10 +127,10 @@ EOF
 
 TARGETS=$(split_targets | sort -fu)
 
-if [[ -z "$TRACE_TOOL" ]]; then
+if ! command -v mtr >/dev/null 2>&1; then
   while IFS= read -r target; do
     [ -n "$target" ] || continue
-    send_trace_payload "$target" false "traceroute" "" 127 "Traceroute tool not found" "" "Neither traceroute nor tracepath is installed"
+    send_trace_payload "$target" false "" 127 "MTR tool not found" "" "mtr is not installed"
   done <<< "$TARGETS"
   exit 0
 fi
@@ -131,19 +138,19 @@ fi
 while IFS= read -r target; do
   [ -n "$target" ] || continue
 
-  command_str="$TRACE_TOOL $TRACE_ARGS $target"
-  output=$(run_with_timeout 45 $TRACE_TOOL $TRACE_ARGS "$target" 2>&1)
+  command_str="mtr $MTR_ARGS $target"
+  output=$(run_with_timeout 180 mtr $MTR_ARGS "$target" 2>&1)
   exit_code=$?
 
-  summary=$(printf '%s\n' "$output" | tail -n 1 | sed 's/^[[:space:]]*//')
+  summary=$(extract_summary "$output")
   if [ -z "$summary" ]; then
-    summary=$([ "$exit_code" -eq 0 ] && echo "Traceroute completed" || echo "Traceroute failed")
+    summary=$([ "$exit_code" -eq 0 ] && echo "MTR completed" || echo "MTR failed")
   fi
 
   if [ "$exit_code" -eq 0 ]; then
-    send_trace_payload "$target" true "traceroute" "$command_str" "$exit_code" "$summary" "$output" ""
+    send_trace_payload "$target" true "$command_str" "$exit_code" "$summary" "$output" ""
   else
-    send_trace_payload "$target" false "traceroute" "$command_str" "$exit_code" "$summary" "$output" "Traceroute command failed"
+    send_trace_payload "$target" false "$command_str" "$exit_code" "$summary" "$output" "MTR command failed"
   fi
 done <<< "$TARGETS"
 
