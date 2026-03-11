@@ -45,7 +45,7 @@ fi
 
 SOURCE_HOST="$(hostname 2>/dev/null || echo unknown)"
 API_URL="https://mon.sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-trace"
-MTR_ARGS="-rwzbc100"
+MTR_ARGS="-rwzbc10"
 
 json_escape() {
   printf '%s' "${1:-}" | sed ':a;N;$!ba;s/\\/\\\\/g;s/"/\\"/g;s/\r/\\r/g;s/\n/\\n/g;s/\t/\\t/g'
@@ -139,7 +139,7 @@ while IFS= read -r target; do
   [ -n "$target" ] || continue
 
   command_str="mtr $MTR_ARGS $target"
-  output=$(run_with_timeout 180 mtr $MTR_ARGS "$target" 2>&1)
+  output=$(run_with_timeout 240 mtr $MTR_ARGS "$target" 2>&1)
   exit_code=$?
 
   summary=$(extract_summary "$output")
