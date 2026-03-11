@@ -1,13 +1,25 @@
 #!/bin/bash
 # Usage:
-# ./sitecenter-host-trace.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE TARGETS_CSV
+# ./sitecenter-host-trace.sh [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE TARGETS_CSV]
 # Version: 2026-03-11
 
 set -u
 
-ENV_FILE="/usr/local/bin/sitecenter-host-trace-env.sh"
+ENV_FILE=""
 
-if [ -f "$ENV_FILE" ]; then
+if [[ $# -gt 0 && ( "$1" == *.env || "$1" == */* ) ]]; then
+    ENV_FILE="$1"
+    shift
+elif [ -f "/usr/local/bin/sitecenter-host-trace-env.sh" ]; then
+    ENV_FILE="/usr/local/bin/sitecenter-host-trace-env.sh"
+fi
+
+if [[ -n "$ENV_FILE" && ! -r "$ENV_FILE" ]]; then
+    echo "Environment file is not readable: $ENV_FILE" >&2
+    exit 1
+fi
+
+if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
     source "$ENV_FILE" 2>/dev/null || true
 fi
 
@@ -17,7 +29,7 @@ SECRET_CODE="${3:-${SITECENTER_SECRET:-}}"
 TARGETS_RAW="${4:-${SITECENTER_TRACE_TARGETS:-}}"
 
 if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
-  echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET_CODE TARGETS_CSV" >&2
+  echo "Usage: $0 [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE TARGETS_CSV]" >&2
   exit 1
 fi
 

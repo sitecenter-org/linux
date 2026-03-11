@@ -1,15 +1,26 @@
 #!/bin/bash
 # Usage:
-# ./sitecenter-host-stats.sh ACCOUNT_CODE MONITOR_CODE SECRET_CODE
+# ./sitecenter-host-stats.sh [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE]
 # Version: 2025-08-21-NETWORK-FIXED-STOP-ON-ERROR
 
 set -e
 
-# Environment file path
-ENV_FILE="/usr/local/bin/sitecenter-host-env.sh"
+ENV_FILE=""
+
+if [[ $# -gt 0 && ( "$1" == *.env || "$1" == */* ) ]]; then
+    ENV_FILE="$1"
+    shift
+elif [ -f "/usr/local/bin/sitecenter-host-env.sh" ]; then
+    ENV_FILE="/usr/local/bin/sitecenter-host-env.sh"
+fi
+
+if [[ -n "$ENV_FILE" && ! -r "$ENV_FILE" ]]; then
+    echo "Environment file is not readable: $ENV_FILE" >&2
+    exit 1
+fi
 
 # Source environment variables
-if [ -f "$ENV_FILE" ]; then
+if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
     source "$ENV_FILE" 2>/dev/null || true
 fi
 
@@ -49,7 +60,7 @@ MONITOR_CODE="${2:-$SITECENTER_MONITOR}"
 SECRET_CODE="${3:-$SITECENTER_SECRET}"
 
 if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
-  echo "Usage: $0 ACCOUNT_CODE MONITOR_CODE SECRET_CODE" >&2
+  echo "Usage: $0 [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE]" >&2
   exit 1
 fi
 

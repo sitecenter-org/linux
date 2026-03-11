@@ -25,9 +25,31 @@ fi
 # Define paths
 INSTALL_PATH="/usr/local/bin"
 SCRIPT_NAME="sitecenter-host-stats.sh"
-ENV_NAME="sitecenter-host-env.sh"
+ENV_NAME="sc-${MONITOR_CODE}.env"
 LOCAL_SCRIPT_PATH="$INSTALL_PATH/$SCRIPT_NAME"
 LOCAL_ENV_PATH="$INSTALL_PATH/$ENV_NAME"
+SCRIPT_URL="https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/$SCRIPT_NAME"
+
+download_script() {
+    local url="$1"
+    local dest="$2"
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    if ! curl -fsSL -o "$tmp_file" "$url"; then
+        rm -f "$tmp_file"
+        echo "Failed to download $url" >&2
+        return 1
+    fi
+
+    if [ ! -s "$tmp_file" ] || ! head -n 1 "$tmp_file" | grep -q '^#!'; then
+        rm -f "$tmp_file"
+        echo "Downloaded content from $url is not a valid shell script" >&2
+        return 1
+    fi
+
+    mv "$tmp_file" "$dest"
+}
 
 # Create environment file
 echo "Creating environment file at $LOCAL_ENV_PATH..."
@@ -51,14 +73,13 @@ if [ "$EUID" -eq 0 ]; then
 fi
 
 # Download the monitoring script
-echo "Downloading monitoring script to $LOCAL_SCRIPT_PATH..."
-
-curl -sL -o "$LOCAL_SCRIPT_PATH" "https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/$SCRIPT_NAME"
+echo "Downloading monitoring script from $SCRIPT_URL..."
+download_script "$SCRIPT_URL" "$LOCAL_SCRIPT_PATH"
 
 chmod +x "$LOCAL_SCRIPT_PATH"
 
-# Prepare the cron job line (without parameters - will use environment file)
-CRON_LINE="* * * * * $LOCAL_SCRIPT_PATH"
+# Prepare the cron job line with explicit environment file
+CRON_LINE="* * * * * $LOCAL_SCRIPT_PATH $LOCAL_ENV_PATH"
 
 # Remove any existing cron jobs for this script (with or without parameters)
 TMP_CRON=$(mktemp)
@@ -74,6 +95,7 @@ rm "$TMP_CRON"
 # Verify
 if crontab -l | grep -qF "$LOCAL_SCRIPT_PATH"; then
   echo "Environment variables stored securely in $LOCAL_ENV_PATH"
+  echo "This env file is dedicated to monitor $MONITOR_CODE."
   echo ""
   echo "To uninstall: crontab -e (remove the line with $LOCAL_SCRIPT_PATH)"
 
