@@ -5,6 +5,11 @@
 
 set -e
 
+# Force C locale to ensure all numeric output uses dot decimal separator for JSON.
+export LC_ALL=C
+export LANG=C
+
+
 ENV_FILE=""
 
 if [[ $# -gt 0 && ( "$1" == *.env || "$1" == */* ) ]]; then
