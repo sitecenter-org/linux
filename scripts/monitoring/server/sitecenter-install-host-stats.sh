@@ -2,7 +2,7 @@
 # SiteCenter Host Monitoring Installer
 # Note: Run with the same user privileges that will execute the cron job
 # (typically 'sudo' for system-wide monitoring)
-# Version: 2025-07-26-17-32
+# Version: 2026-06-26-API-DOMAIN-FAILOVER
 set -e
 
 ACCOUNT_CODE="$1"
@@ -25,10 +25,13 @@ fi
 # Define paths
 INSTALL_PATH="/usr/local/bin"
 SCRIPT_NAME="sitecenter-host-stats.sh"
+HELPER_NAME="sitecenter-api-domains.sh"
 ENV_NAME="sc-${MONITOR_CODE}.env"
 LOCAL_SCRIPT_PATH="$INSTALL_PATH/$SCRIPT_NAME"
+LOCAL_HELPER_PATH="$INSTALL_PATH/$HELPER_NAME"
 LOCAL_ENV_PATH="$INSTALL_PATH/$ENV_NAME"
 SCRIPT_URL="https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/$SCRIPT_NAME"
+HELPER_URL="https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/$HELPER_NAME"
 
 download_script() {
     local url="$1"
@@ -72,7 +75,11 @@ if [ "$EUID" -eq 0 ]; then
     chown root:root "$LOCAL_ENV_PATH"
 fi
 
-# Download the monitoring script
+# Download the monitoring script and API domain helper
+echo "Downloading API domain helper from $HELPER_URL..."
+download_script "$HELPER_URL" "$LOCAL_HELPER_PATH"
+chmod 644 "$LOCAL_HELPER_PATH"
+
 echo "Downloading monitoring script from $SCRIPT_URL..."
 download_script "$SCRIPT_URL" "$LOCAL_SCRIPT_PATH"
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-trace.sh [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE TARGETS_CSV]
-# Version: 2026-03-11
+# Version: 2026-06-26-API-DOMAIN-FAILOVER
 
 set -u
 
@@ -43,8 +43,24 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
+_sc_helper_loaded=0
+for _sc_helper in \
+  "/usr/local/bin/sitecenter-api-domains.sh" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sitecenter-api-domains.sh"; do
+  if [ -f "$_sc_helper" ]; then
+    # shellcheck source=/dev/null
+    source "$_sc_helper"
+    _sc_helper_loaded=1
+    break
+  fi
+done
+if [ "$_sc_helper_loaded" -ne 1 ] || ! declare -F sitecenter_post_with_domain_failover >/dev/null 2>&1; then
+  echo "sitecenter-api-domains.sh not found" >&2
+  exit 1
+fi
+
 SOURCE_HOST="$(hostname 2>/dev/null || echo unknown)"
-API_URL="https://mon.sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-trace"
+API_PATH="/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-trace"
 
 json_escape() {
   printf '%s' "${1:-}" | sed ':a;N;$!ba;s/\\/\\\\/g;s/"/\\"/g;s/\r/\\r/g;s/\n/\\n/g;s/\t/\\t/g'
@@ -84,9 +100,7 @@ send_trace_payload() {
   local error_str="$8"
   local timestamp
   local payload
-  local response
-  local http_code
-  local response_body
+  local post_result
 
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   payload=$(cat <<EOF
@@ -94,28 +108,31 @@ send_trace_payload() {
 EOF
 )
 
-  response=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
-    "$API_URL" \
-    -H "Content-Type: application/json" \
-    -H "X-Monitor-Secret: ${SECRET_CODE}" \
-    -d "$payload" 2>&1) || true
+  if sitecenter_post_with_domain_failover \
+    "$MONITOR_CODE" \
+    "$API_PATH" \
+    "$SECRET_CODE" \
+    "$payload" \
+    30 \
+    "host-trace"; then
+    return 0
+  fi
+  post_result=$?
 
-  http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
-  response_body=$(echo "$response" | sed '/HTTP_CODE:/d')
-
-  if echo "$response_body" | grep -q "Invalid secret!"; then
-      echo "Invalid secret. Stopping traceroute monitor." >&2
-      exit 1
+  if [ "$post_result" -eq 2 ]; then
+    case "$SITECENTER_CRITICAL_ERROR" in
+      invalid_secret)
+        echo "Invalid secret. Stopping traceroute monitor." >&2
+        exit 1
+        ;;
+      monitor_inactive)
+        echo "Monitor is not active. Pausing traceroute monitor." >&2
+        exit 1
+        ;;
+    esac
   fi
 
-  if echo "$response_body" | grep -q "Monitor is not active!"; then
-      echo "Monitor is not active. Pausing traceroute monitor." >&2
-      exit 1
-  fi
-
-  if [ "$http_code" != "200" ]; then
-      echo "Warning: Received HTTP code $http_code for target $target_host" >&2
-  fi
+  echo "Warning: Failed to send traceroute result for target $target_host via all API domains" >&2
 }
 
 TARGETS=$(split_targets | sort -fu)

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage:
 # ./sitecenter-host-stats.sh [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE]
-# Version: 2025-08-21-NETWORK-FIXED-STOP-ON-ERROR
+# Version: 2026-06-26-API-DOMAIN-FAILOVER
 
 set -e
 
@@ -66,6 +66,22 @@ SECRET_CODE="${3:-$SITECENTER_SECRET}"
 
 if [[ -z "$ACCOUNT_CODE" || -z "$MONITOR_CODE" || -z "$SECRET_CODE" ]]; then
   echo "Usage: $0 [/path/to/env-file.env] [ACCOUNT_CODE MONITOR_CODE SECRET_CODE]" >&2
+  exit 1
+fi
+
+_sc_helper_loaded=0
+for _sc_helper in \
+  "/usr/local/bin/sitecenter-api-domains.sh" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sitecenter-api-domains.sh"; do
+  if [ -f "$_sc_helper" ]; then
+    # shellcheck source=/dev/null
+    source "$_sc_helper"
+    _sc_helper_loaded=1
+    break
+  fi
+done
+if [ "$_sc_helper_loaded" -ne 1 ] || ! declare -F sitecenter_post_with_domain_failover >/dev/null 2>&1; then
+  echo "sitecenter-api-domains.sh not found" >&2
   exit 1
 fi
 
@@ -643,37 +659,38 @@ mark_as_paused() {
     echo "Monitoring paused until $pause_until_date. It will automatically resume after this time." >&2
 }
 
-# Send metrics via curl and capture response
-if command -v curl >/dev/null 2>&1; then
-    response=$(timeout 30 curl -s -w "\nHTTP_CODE:%{http_code}" -X POST \
-  "https://mon.sitecenter.app/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats" \
-  -H "Content-Type: application/json" \
-  -H "X-Monitor-Secret: ${SECRET_CODE}" \
-        -d "$json_payload" 2>&1) || true
+# Send metrics via curl with API domain failover
+post_result=1
+if sitecenter_post_with_domain_failover \
+  "$MONITOR_CODE" \
+  "/api/pub/v1/a/${ACCOUNT_CODE}/monitor/${MONITOR_CODE}/host-stats" \
+  "$SECRET_CODE" \
+  "$json_payload" \
+  30 \
+  "host-stats"; then
+  post_result=0
+else
+  post_result=$?
+fi
 
-    # Extract HTTP code and response body
-    http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
-    response_body=$(echo "$response" | sed '/HTTP_CODE:/d')
-
-    # Check for critical errors in the response
-    if echo "$response_body" | grep -q "Invalid secret!"; then
+case "$post_result" in
+  0)
+    ;;
+  2)
+    case "$SITECENTER_CRITICAL_ERROR" in
+      invalid_secret)
         mark_as_stopped "Invalid secret"
         exit 1
-    fi
-
-    if echo "$response_body" | grep -q "Monitor is not active!"; then
+        ;;
+      monitor_inactive)
         mark_as_paused "Monitor is not active"
         exit 1
-fi
-
-    # Log successful submission (optional)
-    if [ "$http_code" = "200" ]; then
-        # Success - no action needed
-        :
-    else
-        # Non-critical error - log but continue
-        echo "Warning: Received HTTP code $http_code" >&2
-    fi
-fi
+        ;;
+    esac
+    ;;
+  *)
+    echo "Warning: Failed to send host-stats via all API domains" >&2
+    ;;
+esac
 
 exit 0

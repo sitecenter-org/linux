@@ -1,6 +1,6 @@
 #!/bin/bash
 # Usage: ./sitecenter-install-host-mtr.sh ACCOUNT_CODE MONITOR_CODE SECRET TARGETS_CSV
-# Version: 2026-03-11
+# Version: 2026-06-26-API-DOMAIN-FAILOVER
 
 set -e
 
@@ -23,10 +23,13 @@ fi
 
 INSTALL_PATH="/usr/local/bin"
 SCRIPT_NAME="sitecenter-host-mtr.sh"
+HELPER_NAME="sitecenter-api-domains.sh"
 ENV_NAME="sc-${MONITOR_CODE}.env"
 LOCAL_SCRIPT_PATH="$INSTALL_PATH/$SCRIPT_NAME"
+LOCAL_HELPER_PATH="$INSTALL_PATH/$HELPER_NAME"
 LOCAL_ENV_PATH="$INSTALL_PATH/$ENV_NAME"
 SCRIPT_URL="https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/$SCRIPT_NAME"
+HELPER_URL="https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/$HELPER_NAME"
 
 download_script() {
     local url="$1"
@@ -66,6 +69,10 @@ chmod 640 "$LOCAL_ENV_PATH"
 if [ "$EUID" -eq 0 ]; then
     chown root:root "$LOCAL_ENV_PATH"
 fi
+
+echo "Downloading API domain helper from $HELPER_URL..."
+download_script "$HELPER_URL" "$LOCAL_HELPER_PATH"
+chmod 644 "$LOCAL_HELPER_PATH"
 
 echo "Downloading monitoring script from $SCRIPT_URL..."
 download_script "$SCRIPT_URL" "$LOCAL_SCRIPT_PATH"

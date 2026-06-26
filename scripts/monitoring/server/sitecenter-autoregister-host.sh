@@ -1,7 +1,7 @@
 #!/bin/bash
 # SiteCenter Auto-Registration and Host Monitoring Installer
 # Automatically registers server and installs host monitoring
-# Version: 2025-07-30
+# Version: 2026-06-26-API-DOMAIN-FAILOVER
 set -e
 
 # Check if monitoring is already installed
@@ -100,26 +100,48 @@ JSON_PAYLOAD=$(cat <<EOF
 EOF
 )
 
-# Make API request
-API_URL="https://mon.sitecenter.app/api/pub/v1/a/$ACCOUNT_CODE/ws/$WORKSPACE_ID/servers/autoRegisterNew"
-echo "API Endpoint: $API_URL"
-
-# Create temporary file for response
-RESPONSE_FILE=$(mktemp)
-HTTP_CODE=$(curl -w "%{http_code}" -s -o "$RESPONSE_FILE" \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d "$JSON_PAYLOAD" \
-    "$API_URL")
-
-# Check HTTP response code
-if [[ "$HTTP_CODE" -ne 200 ]]; then
-    echo "Error: API request failed with HTTP code $HTTP_CODE"
-    echo "Response:"
-    cat "$RESPONSE_FILE"
-    rm "$RESPONSE_FILE"
-    exit 1
+# Make API request with domain failover
+_sc_helper="/usr/local/bin/sitecenter-api-domains.sh"
+if [ ! -f "$_sc_helper" ]; then
+  _script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
+  if [ -f "${_script_dir}/sitecenter-api-domains.sh" ]; then
+    _sc_helper="${_script_dir}/sitecenter-api-domains.sh"
+  else
+    echo "Downloading sitecenter-api-domains.sh..."
+    mkdir -p /usr/local/bin 2>/dev/null || true
+    if ! curl -fsSL -o "$_sc_helper" \
+      "https://raw.githubusercontent.com/sitecenter-org/linux/main/scripts/monitoring/server/sitecenter-api-domains.sh"; then
+      echo "Error: Could not load sitecenter-api-domains.sh" >&2
+      exit 1
+    fi
+  fi
 fi
+# shellcheck source=/dev/null
+source "$_sc_helper"
+
+API_PATH="/api/pub/v1/a/$ACCOUNT_CODE/ws/$WORKSPACE_ID/servers/autoRegisterNew"
+STATE_KEY="${ACCOUNT_CODE}-autoregister"
+echo "Registering via API path: $API_PATH"
+
+if ! sitecenter_post_with_domain_failover \
+  "$STATE_KEY" \
+  "$API_PATH" \
+  "" \
+  "$JSON_PAYLOAD" \
+  30 \
+  "autoRegisterNew"; then
+  echo "Error: API request failed on all domains"
+  if [ -n "$SITECENTER_RESPONSE_BODY" ]; then
+    echo "Response:"
+    echo "$SITECENTER_RESPONSE_BODY"
+  fi
+  exit 1
+fi
+
+RESPONSE_FILE=$(mktemp)
+printf '%s' "$SITECENTER_RESPONSE_BODY" > "$RESPONSE_FILE"
+HTTP_CODE="$SITECENTER_HTTP_CODE"
+echo "API domain used: $SITECENTER_API_DOMAIN_USED"
 
 # Parse JSON response
 echo "Server registration successful!"
